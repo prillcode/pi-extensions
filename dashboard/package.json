@@ -1,0 +1,10 @@
+{
+  "name": "dashboard",
+  "description": "Pi Dashboard - Multi-tab dashboard with git integration and session management",
+  "version": "1.0.0",
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
