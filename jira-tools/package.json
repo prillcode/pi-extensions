@@ -1,0 +1,15 @@
+{
+  "name": "pi-extension-jira-tools",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "scripts": {
+    "build": "echo 'nothing to build'",
+    "check": "echo 'load via pi /reload to validate scaffold'"
+  }
+}
