@@ -7,6 +7,7 @@ import type {
   JiraCloseResult,
   JiraCreateIssueParams,
   JiraCreateIssueResult,
+  JiraGetIssueParams,
   JiraIssueSummary,
   JiraSearchIssuesParams,
 } from './types.js';
@@ -25,6 +26,11 @@ interface JiraSearchResponse {
     key: string;
     fields?: Record<string, unknown>;
   }>;
+}
+
+interface JiraIssueResponse {
+  key?: string;
+  fields?: Record<string, unknown>;
 }
 
 interface JiraTransitionsResponse {
@@ -120,7 +126,51 @@ function normalizeSprintNames(value: unknown): string[] {
     .filter((name): name is string => Boolean(name));
 }
 
-function normalizeIssue(issue: { key: string; fields?: Record<string, unknown> }): JiraIssueSummary {
+function extractAdfText(value: unknown): string | null {
+  if (!value) {
+    return null;
+  }
+
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    const parts = value
+      .map((entry) => extractAdfText(entry))
+      .filter((entry): entry is string => Boolean(entry && entry.trim()));
+
+    return parts.length > 0 ? parts.join('\n').trim() : null;
+  }
+
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const text = asString(record.text);
+  if (text) {
+    return text;
+  }
+
+  const content = Array.isArray(record.content) ? record.content : [];
+  const childParts = content
+    .map((entry) => extractAdfText(entry))
+    .filter((entry): entry is string => Boolean(entry && entry.trim()));
+
+  if (childParts.length === 0) {
+    return null;
+  }
+
+  const type = asString(record.type);
+  const joiner = type === 'paragraph' || type === 'bulletList' || type === 'orderedList' || type === 'listItem' ? '\n' : '';
+  return childParts.join(joiner).trim();
+}
+
+function normalizeIssue(
+  issue: { key: string; fields?: Record<string, unknown> },
+  options?: { includeDescription?: boolean },
+): JiraIssueSummary {
   const fields = issue.fields || {};
   const assignee = asRecord(fields.assignee);
   const status = asRecord(fields.status);
@@ -136,6 +186,7 @@ function normalizeIssue(issue: { key: string; fields?: Record<string, unknown> }
     issueType: asString(issueType?.name),
     sprints: normalizeSprintNames(fields.customfield_10020),
     url: getIssueBrowseUrl(issue.key),
+    description: options?.includeDescription ? extractAdfText(fields.description) : undefined,
   };
 }
 
@@ -166,6 +217,42 @@ export async function searchJiraIssues(params: JiraSearchIssuesParams): Promise<
 
   const data = (await response.json()) as JiraSearchResponse;
   return (data.issues || []).map(normalizeIssue);
+}
+
+export async function getJiraIssue(params: JiraGetIssueParams): Promise<JiraIssueSummary> {
+  const config = getJiraConfig();
+  const authHeader = await getJiraBasicAuthHeader();
+  const fields = params.includeDescription ? [...DEFAULT_QUERY_FIELDS, 'description'] : [...DEFAULT_QUERY_FIELDS];
+
+  const response = await fetch(
+    `${config.instanceUrl}/rest/api/3/issue/${encodeURIComponent(params.issueKey)}?fields=${encodeURIComponent(fields.join(','))}`,
+    {
+      method: 'GET',
+      headers: {
+        Authorization: authHeader,
+        Accept: 'application/json',
+      },
+    },
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Jira get issue failed (${response.status}): ${errorText}`);
+  }
+
+  const data = (await response.json()) as JiraIssueResponse;
+
+  if (!data.key) {
+    throw new Error(`Jira get issue succeeded but no issue key was returned for ${params.issueKey}.`);
+  }
+
+  return normalizeIssue(
+    {
+      key: data.key,
+      fields: data.fields,
+    },
+    { includeDescription: params.includeDescription },
+  );
 }
 
 export async function createJiraIssue(params: JiraCreateIssueParams): Promise<JiraCreateIssueResult> {

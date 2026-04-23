@@ -8,6 +8,7 @@ export interface JiraIssueSummary {
   issueType?: string | null;
   sprints?: string[];
   url?: string;
+  description?: string | null;
 }
 
 export interface JiraCreateIssueParams {
@@ -30,6 +31,11 @@ export interface JiraSearchIssuesParams {
   jql: string;
   maxResults?: number;
   projectKey?: string;
+}
+
+export interface JiraGetIssueParams {
+  issueKey: string;
+  includeDescription?: boolean;
 }
 
 export interface JiraAddCommentParams {

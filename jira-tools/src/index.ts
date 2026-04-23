@@ -17,7 +17,14 @@ function parseIssueKeyAndGuidance(args: string): { issueKey?: string; guidance?:
 
 import { detectJiraAuthState } from './auth.js';
 import { getJiraConfig } from './config.js';
-import { addJiraComment, closeJiraIssue, createJiraIssue, getDefaultQueryFields, searchJiraIssues } from './jira-client.js';
+import {
+  addJiraComment,
+  closeJiraIssue,
+  createJiraIssue,
+  getDefaultQueryFields,
+  getJiraIssue,
+  searchJiraIssues,
+} from './jira-client.js';
 
 const jiraCreateIssueTool = defineTool({
   name: 'jira_create_issue',
@@ -92,6 +99,46 @@ const jiraSearchIssuesTool = defineTool({
   },
 });
 
+const jiraGetIssueTool = defineTool({
+  name: 'jira_get_issue',
+  label: 'Jira Get Issue',
+  description: 'Get a single Jira issue by key with normalized fields, optionally including description.',
+  parameters: Type.Object({
+    issueKey: Type.String({ description: 'Jira issue key, e.g. MDO-123' }),
+    includeDescription: Type.Optional(
+      Type.Boolean({ description: 'Whether to include the issue description in the normalized result' }),
+    ),
+  }),
+  async execute(_toolCallId, params) {
+    const issue = await getJiraIssue(params);
+    const sprintText = issue.sprints && issue.sprints.length > 0 ? issue.sprints.join(', ') : 'none';
+    const assigneeText = issue.assigneeDisplayName || 'Unassigned';
+    const statusText = issue.status || 'Unknown';
+    const storyPointsText = issue.storyPoints ?? 'unset';
+    const issueTypeText = issue.issueType || 'Unknown';
+
+    const lines = [
+      `${issue.key}: ${issue.summary}`,
+      `status: ${statusText}`,
+      `assigneeDisplayName: ${assigneeText}`,
+      `assigneeEmail: ${issue.assigneeEmail || 'n/a'}`,
+      `storyPoints: ${storyPointsText}`,
+      `issueType: ${issueTypeText}`,
+      `sprints: ${sprintText}`,
+      `url: ${issue.url || 'n/a'}`,
+    ];
+
+    if (params.includeDescription) {
+      lines.push(`description:\n${issue.description || ''}`);
+    }
+
+    return {
+      content: [{ type: 'text', text: lines.join('\n') }],
+      details: issue,
+    };
+  },
+});
+
 const jiraAddCommentTool = defineTool({
   name: 'jira_add_comment',
   label: 'Jira Add Comment',
@@ -157,6 +204,7 @@ export default function jiraToolsExtension(pi: ExtensionAPI) {
 
   pi.registerTool(jiraCreateIssueTool);
   pi.registerTool(jiraSearchIssuesTool);
+  pi.registerTool(jiraGetIssueTool);
   pi.registerTool(jiraAddCommentTool);
   pi.registerTool(jiraCloseTool);
 
@@ -235,6 +283,36 @@ export default function jiraToolsExtension(pi: ExtensionAPI) {
       const prompt = [
         `Use jira_search_issues with jql ${JSON.stringify(jql.trim())} and maxResults ${maxResults}.`,
         'Show only the tool-backed normalized results.',
+        'If the tool errors, report the error and do not invent issue data.',
+      ].join('\n');
+
+      if (ctx.isIdle()) {
+        pi.sendUserMessage(prompt);
+      } else {
+        pi.sendUserMessage(prompt, { deliverAs: 'followUp' });
+      }
+    },
+  });
+
+  pi.registerCommand('jira-get-issue', {
+    description: 'Retrieve a single Jira issue by key with optional description',
+    handler: async (args, ctx) => {
+      const issueKey = args.trim() || (await ctx.ui.input('Jira issue key')) || '';
+      if (!issueKey.trim()) {
+        ctx.ui.notify('jira-get-issue requires an issue key, e.g. /jira-get-issue MDO-123', 'warning');
+        return;
+      }
+
+      const includeDescriptionChoice = await ctx.ui.select('Include description?', ['No', 'Yes']);
+      if (!includeDescriptionChoice) {
+        ctx.ui.notify('Cancelled jira-get-issue.', 'warning');
+        return;
+      }
+
+      const includeDescription = includeDescriptionChoice === 'Yes';
+      const prompt = [
+        `Use jira_get_issue with issueKey ${JSON.stringify(issueKey.trim())}${includeDescription ? ' and includeDescription true' : ''}.`,
+        'Show only the tool-backed normalized result.',
         'If the tool errors, report the error and do not invent issue data.',
       ].join('\n');
 

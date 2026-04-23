@@ -20,12 +20,14 @@ Then reload in pi with:
 ## Current status
 Implemented and working:
 - `jira_search_issues`
+- `jira_get_issue`
 - `jira_add_comment`
 - `jira_create_issue` (first pass)
 - `jira_close` (first pass)
 - `/jira-status`
 - `/jira-create`
 - `/jira-search`
+- `/jira-get-issue`
 - `/jira-log`
 - `/jira-close`
 
@@ -87,6 +89,25 @@ Normalized issue output includes:
 - `issueType`
 - `sprints`
 - `url`
+
+### `jira_get_issue`
+Get a single Jira issue by key and return the same normalized issue shape as `jira_search_issues`.
+
+Parameters:
+- `issueKey`
+- optional `includeDescription`
+
+Normalized issue output includes:
+- `key`
+- `summary`
+- `status`
+- `assigneeDisplayName`
+- `assigneeEmail`
+- `storyPoints`
+- `issueType`
+- `sprints`
+- `url`
+- optional `description`
 
 ### `jira_add_comment`
 Add a Jira comment to an issue using Atlassian document format.
@@ -171,6 +192,20 @@ Examples:
 /jira-search project = MDO ORDER BY updated DESC
 ```
 
+### `/jira-get-issue ISSUE-123`
+Interactive helper for retrieving a single Jira issue.
+
+Current flow:
+1. provide or prompt for issue key
+2. choose whether to include description
+3. queue a prompt that explicitly invokes `jira_get_issue`
+
+Examples:
+```text
+/jira-get-issue MDO-719
+/jira-get-issue
+```
+
 ### `/jira-log ISSUE-123 [optional guidance]`
 Queue a prompt that asks pi to summarize the relevant recent session context into a concise Jira progress comment and then call `jira_add_comment`.
 
@@ -216,6 +251,26 @@ Show me the 5 most recently updated Jira issues in MDO.
 Equivalent JQL used by the tool:
 ```jql
 project = MDO ORDER BY updated DESC
+```
+
+### Get a single issue
+Prompt:
+```text
+Get Jira issue MDO-719 and include the description.
+```
+
+Observed tool-backed result shape:
+```text
+MDO-719: CS: AgentCore Debugging and Fixing Errors
+status: In Progress
+assigneeDisplayName: Example User
+assigneeEmail: example.user@tylertech.com
+storyPoints: unset
+issueType: Task
+sprints: none
+url: https://tylertech.atlassian.net/browse/MDO-719
+description:
+Investigate recent AgentCore/agent-api failures, identify root cause, and implement fixes/guardrails to prevent recurring runtime errors.
 ```
 
 ### Add progress comment
