@@ -197,12 +197,12 @@ async function scaffoldArtifactFromInstructions(
 	artifact: string,
 	change: string,
 	force = false,
-) {
+): Promise<string | undefined> {
 	const result = await runOpenSpec(ctx.cwd, buildOpenSpecArgs({ action: "instructions", artifact, itemName: change }));
 	if (result.code !== 0) {
 		ctx.ui.notify(`OpenSpec instructions failed: ${artifact}`, "error");
 		postCommandOutput(pi, `OpenSpec instructions for ${artifact} (${change})`, result.combined);
-		return;
+		return undefined;
 	}
 
 	const outputPath = extractOutputPath(result.combined);
@@ -210,7 +210,7 @@ async function scaffoldArtifactFromInstructions(
 	if (!outputPath || !template) {
 		ctx.ui.notify(`Could not extract scaffold template for ${artifact}`, "error");
 		postCommandOutput(pi, `OpenSpec instructions for ${artifact} (${change})`, result.combined);
-		return;
+		return undefined;
 	}
 
 		if ((await pathExists(outputPath)) && !force) {
@@ -221,7 +221,7 @@ async function scaffoldArtifactFromInstructions(
 			if (!overwrite) {
 				ctx.ui.notify(`Skipped ${artifact}; file already exists`, "warning");
 				postCommandOutput(pi, `OpenSpec instructions for ${artifact} (${change})`, result.combined);
-				return;
+				return outputPath;
 			}
 		}
 
@@ -233,6 +233,37 @@ async function scaffoldArtifactFromInstructions(
 		`Scaffolded OpenSpec ${artifact} for ${change}`,
 		[`Path: ${path.relative(ctx.cwd, outputPath)}`, "", template].join("\n"),
 	);
+	return outputPath;
+}
+
+function buildDraftPrompt(params: {
+	artifact: "proposal" | "design";
+	change: string;
+	targetPath: string;
+	sourcePaths: string[];
+}) {
+	const sourceList = params.sourcePaths.map((sourcePath) => `- @${sourcePath}`).join("\n");
+	if (params.artifact === "proposal") {
+		return [
+			`Draft @${params.targetPath} for OpenSpec change \"${params.change}\".`,
+			"Use these PRD-style/source docs as primary input:",
+			sourceList,
+			"",
+			"Also read the current OpenSpec specs in @openspec/specs/ as needed to determine whether this change introduces new capabilities or modifies existing ones.",
+			"Populate the proposal with concrete content, replacing placeholder comments/template bullets.",
+			"Keep the structure already in the file, but rewrite it into a real proposal.",
+			"Be explicit in the Capabilities section and use existing spec names when describing modified capabilities.",
+		].join("\n");
+	}
+	return [
+		`Draft @${params.targetPath} for OpenSpec change \"${params.change}\".`,
+		"Use these PRD-style/source docs as primary input:",
+		sourceList,
+		"",
+		`Also read @openspec/changes/${params.change}/proposal.md and relevant files under @openspec/specs/ before drafting the design.`,
+		"Populate the design with concrete content, replacing placeholder comments/template bullets.",
+		"Keep the structure already in the file, but rewrite it into a real technical design focused on approach, decisions, risks, and non-goals.",
+	].join("\n");
 }
 
 export default function openSpecExtension(pi: ExtensionAPI) {
@@ -424,6 +455,48 @@ export default function openSpecExtension(pi: ExtensionAPI) {
 				return;
 			}
 			await scaffoldArtifactFromInstructions(pi, ctx, "tasks", change, parts.includes("--force"));
+		},
+	});
+
+	pi.registerCommand("openspec-draft-proposal", {
+		description: "Scaffold proposal.md and ask Pi to draft it from source docs: /openspec-draft-proposal <change> <doc...> [--force]",
+		handler: async (args, ctx) => {
+			const parts = parseArgs(args);
+			const force = parts.includes("--force");
+			const filtered = parts.filter((part) => part !== "--force");
+			const change = filtered[0];
+			const sourcePaths = filtered.slice(1);
+			if (!change || sourcePaths.length === 0) {
+				ctx.ui.notify("Usage: /openspec-draft-proposal <change> <doc...> [--force]", "warning");
+				return;
+			}
+			const outputPath = await scaffoldArtifactFromInstructions(pi, ctx, "proposal", change, force);
+			if (!outputPath) return;
+			const targetPath = path.relative(ctx.cwd, outputPath);
+			const prompt = buildDraftPrompt({ artifact: "proposal", change, targetPath, sourcePaths });
+			ctx.ui.notify(`Queued proposal drafting prompt for ${change}`, "success");
+			pi.sendUserMessage(prompt);
+		},
+	});
+
+	pi.registerCommand("openspec-draft-design", {
+		description: "Scaffold design.md and ask Pi to draft it from source docs: /openspec-draft-design <change> <doc...> [--force]",
+		handler: async (args, ctx) => {
+			const parts = parseArgs(args);
+			const force = parts.includes("--force");
+			const filtered = parts.filter((part) => part !== "--force");
+			const change = filtered[0];
+			const sourcePaths = filtered.slice(1);
+			if (!change || sourcePaths.length === 0) {
+				ctx.ui.notify("Usage: /openspec-draft-design <change> <doc...> [--force]", "warning");
+				return;
+			}
+			const outputPath = await scaffoldArtifactFromInstructions(pi, ctx, "design", change, force);
+			if (!outputPath) return;
+			const targetPath = path.relative(ctx.cwd, outputPath);
+			const prompt = buildDraftPrompt({ artifact: "design", change, targetPath, sourcePaths });
+			ctx.ui.notify(`Queued design drafting prompt for ${change}`, "success");
+			pi.sendUserMessage(prompt);
 		},
 	});
 }

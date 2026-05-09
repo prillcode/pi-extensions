@@ -48,10 +48,13 @@ Supported actions:
 - `/openspec-proposal <change> [--force]`
 - `/openspec-design <change> [--force]`
 - `/openspec-tasks <change> [--force]`
+- `/openspec-draft-proposal <change> <doc...> [--force]`
+- `/openspec-draft-design <change> <doc...> [--force]`
 
 ## Notes
 - The extension disables OpenSpec telemetry for spawned commands with `OPENSPEC_TELEMETRY=0`.
 - It auto-detects `openspec/` in the current repo and adds lightweight OpenSpec context for the agent.
 - `/openspec-proposal`, `/openspec-design`, and `/openspec-tasks` scaffold files by extracting the `<template>` and `Write to:` path from `openspec instructions` output.
+- `/openspec-draft-proposal` and `/openspec-draft-design` scaffold the file and then queue a Pi drafting prompt that uses the provided PRD-style docs as source input.
 - If a target file already exists, the command asks before overwriting unless `--force` is used.
 - This extension is intended to wrap the CLI, not replace native OpenSpec file structures.
