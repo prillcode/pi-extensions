@@ -21,6 +21,7 @@ type RepoOpenSpecState = {
 const OPEN_SPEC_TOOL_PARAMETERS = Type.Object({
 	action: Type.Union(
 		[
+			Type.Literal("init"),
 			Type.Literal("list_changes"),
 			Type.Literal("list_specs"),
 			Type.Literal("show"),
@@ -84,6 +85,8 @@ function buildOpenSpecArgs(params: {
 	json?: boolean;
 }): string[] {
 	switch (params.action) {
+		case "init":
+			return ["init", ".", "--tools", "pi", "--force"];
 		case "list_changes":
 			return ["list", "--changes", ...(params.json ? ["--json"] : [])];
 		case "list_specs":
@@ -388,7 +391,7 @@ export default function openSpecExtension(pi: ExtensionAPI) {
 		parameters: OPEN_SPEC_TOOL_PARAMETERS,
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const state = await getOpenSpecState(ctx.cwd);
-			if (!state) {
+			if (!state && params.action !== "init") {
 				return {
 					content: [{ type: "text", text: "No openspec/ directory found in the current working directory." }],
 					details: { ok: false },
@@ -482,6 +485,22 @@ export default function openSpecExtension(pi: ExtensionAPI) {
 			const result = await runOpenSpec(ctx.cwd, buildOpenSpecArgs({ action: "instructions", artifact, itemName: change }));
 			ctx.ui.notify(result.code === 0 ? `OpenSpec instructions: ${artifact}` : `OpenSpec instructions failed: ${artifact}`, result.code === 0 ? "success" : "error");
 			postCommandOutput(pi, `OpenSpec instructions for ${artifact} (${change})`, result.combined);
+		},
+	});
+
+	pi.registerCommand("osp-init", {
+		description: "Initialize OpenSpec in the current repo: /osp-init",
+		handler: async (_args, ctx) => {
+			const result = await runOpenSpec(ctx.cwd, buildOpenSpecArgs({ action: "init" }));
+			ctx.ui.notify(result.code === 0 ? "OpenSpec initialized" : "OpenSpec init failed", result.code === 0 ? "success" : "error");
+			const nextSteps = [
+				"Next steps:",
+				"- /osp-list specs",
+				"- /osp-list changes",
+				"- /osp-validate --all",
+				"- /osp-new-change <name> [description]",
+			].join("\n");
+			postCommandOutput(pi, "OpenSpec init", [result.combined || "(no output)", "", nextSteps].join("\n"));
 		},
 	});
 

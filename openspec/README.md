@@ -37,6 +37,7 @@ Registers the Pi tool:
 - `openspec_cli`
 
 Supported actions:
+- `init`
 - `list_changes`
 - `list_specs`
 - `show`
@@ -47,6 +48,7 @@ Supported actions:
 
 ### 2. OpenSpec-aware slash commands
 #### General
+- `/osp-init`
 - `/osp-list [changes|specs]`
 - `/osp-show <name> [change|spec]`
 - `/osp-validate [--all|<name>] [change|spec]`
@@ -80,6 +82,16 @@ Example:
 If there are multiple active changes, pass the change name explicitly.
 
 ## Typical workflow
+
+### Initialize OpenSpec in a repo
+```text
+/osp-init
+```
+
+This runs OpenSpec init in the current repo using Pi-friendly defaults:
+- path: `.`
+- tool profile: `pi`
+- auto cleanup: `--force`
 
 ### Create a change
 ```text
