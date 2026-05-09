@@ -2,7 +2,7 @@
 
 Pi extension for working with [OpenSpec](https://openspec.dev) from inside Pi.
 
-It wraps the local `openspec` CLI, adds OpenSpec-aware slash commands, scaffolds proposal/design/tasks files from `openspec instructions`, and can queue drafting prompts from PRD-style source documents.
+It wraps the local `openspec` CLI, adds short `osp-*` slash commands, scaffolds OpenSpec artifacts from `openspec instructions`, drafts files from PRD-style docs, and helps complete the full OpenSpec lifecycle inside Pi.
 
 ## Locations
 
@@ -29,15 +29,15 @@ Install the OpenSpec CLI:
 npm install -g @fission-ai/openspec@latest
 ```
 
-## What this extension does
+## What this extension provides
 
-### 1. OpenSpec CLI wrapper tool
-Registers the Pi tool:
-
+### Tool
 - `openspec_cli`
 
 Supported actions:
 - `init`
+- `update`
+- `archive`
 - `list_changes`
 - `list_specs`
 - `show`
@@ -46,113 +46,121 @@ Supported actions:
 - `instructions`
 - `new_change`
 
-### 2. OpenSpec-aware slash commands
-#### General
+### Slash commands
+#### Help / setup / maintenance
+- `/osp-help`
 - `/osp-init`
+- `/osp-update`
+
+#### General OpenSpec workflow
 - `/osp-list [changes|specs]`
 - `/osp-show <name> [change|spec]`
-- `/osp-validate [--all|<name>] [change|spec]`
 - `/osp-status [change]`
+- `/osp-validate [--all|<name>] [change|spec]`
 - `/osp-instructions <artifact> [change]`
 - `/osp-new-change <name> [description]`
+- `/osp-archive [change] [--skip-specs] [--no-validate]`
 
-#### Scaffolding from OpenSpec templates
+#### Scaffolding
 - `/osp-proposal [change] [--force]`
 - `/osp-design [change] [--force]`
 - `/osp-tasks [change] [--force]`
 - `/osp-spec-deltas [change] [--force]`
 
-#### Drafting from PRD-style source docs
+#### Drafting from PRD-style docs
 - `/osp-draft-proposal [change] <doc...> [--force]`
 - `/osp-draft-design [change] <doc...> [--force]`
 - `/osp-draft-tasks [change] <doc...> [--force]`
 
 ## Active change convenience
 
-If the repo has exactly **one active OpenSpec change**, the commands that need a change name can omit it.
+If the repo has exactly **one active OpenSpec change**, commands that need a change name can omit it.
 
-Example:
+Examples:
 
 ```text
-/osp-design
 /osp-status
+/osp-design
 /osp-draft-design docs/prd.md
+/osp-spec-deltas
 ```
 
-If there are multiple active changes, pass the change name explicitly.
+If multiple active changes exist, pass the change explicitly.
 
 ## Typical workflow
 
-### Initialize OpenSpec in a repo
+### 1. Initialize OpenSpec in a repo
 ```text
 /osp-init
 ```
 
-This runs OpenSpec init in the current repo using Pi-friendly defaults:
+This runs OpenSpec init with Pi-friendly defaults:
 - path: `.`
 - tool profile: `pi`
 - auto cleanup: `--force`
 
-### Create a change
+### 2. Create a change
 ```text
 /osp-new-change add-sso "Add SSO support"
 ```
 
-### Scaffold core artifacts
-```text
-/osp-proposal add-sso
-/osp-design add-sso
-/osp-tasks add-sso
-```
-
-### Or draft them from a PRD
+### 3. Draft proposal / design / tasks from a PRD
 ```text
 /osp-draft-proposal add-sso docs/sso-prd.md
 /osp-draft-design add-sso docs/sso-prd.md
 /osp-draft-tasks add-sso docs/sso-prd.md
 ```
 
-### Scaffold spec delta files from proposal capabilities
-After you fill in the `Capabilities` section of `proposal.md`:
+### 4. Scaffold spec delta files from proposal capabilities
+After filling in the `Capabilities` section of `proposal.md`:
 
 ```text
 /osp-spec-deltas add-sso
 ```
 
-This creates change-scoped spec files under:
-
-```text
-openspec/changes/<change>/specs/<capability>/spec.md
-```
-
-### Validate
+### 5. Validate
 ```text
 /osp-validate add-sso change
 /osp-validate --all
 ```
 
+### 6. Archive when complete
+```text
+/osp-archive add-sso
+```
+
 ## Drafting behavior
 
-The `draft-*` commands do two things:
+The draft commands do two things:
 
 1. scaffold the target file from `openspec instructions`
-2. queue a Pi prompt telling the agent to draft the file using the provided PRD-style docs
+2. queue a Pi drafting prompt that uses your PRD-style docs as source input
 
-That means OpenSpec still provides the structure and expected artifact flow, while Pi helps author the actual content.
+This keeps OpenSpec in charge of structure and artifact flow while Pi helps author the content.
 
-## Scaffolding behavior
+If Pi is already busy when a draft command runs, the drafting prompt is queued as a **follow-up** instead of being injected immediately.
 
-### Proposal / design / tasks
-The scaffolding commands extract:
-- the `Write to:` path
-- the `<template>` block
+## Validation / safety behavior
 
-from `openspec instructions` output and write the artifact file for you.
+### Source doc validation
+The draft commands validate source doc paths before queueing a drafting prompt.
 
-### Spec deltas
-`/osp-spec-deltas` reads `proposal.md`, parses the `New Capabilities` and `Modified Capabilities` bullet lists, and creates simple starter `spec.md` files for each listed capability.
+If a file is missing or is not a file, the command fails fast with a clear message.
 
-To work well, use concrete bullets such as:
+### Overwrite behavior
+If a target artifact already exists:
+- interactive Pi sessions ask before overwriting
+- `--force` overwrites immediately
+
+## Spec delta scaffolding
+
+`/osp-spec-deltas` reads `proposal.md`, parses the `New Capabilities` and `Modified Capabilities` bullet lists, and creates starter change-scoped spec files under:
+
+```text
+openspec/changes/<change>/specs/<capability>/spec.md
+```
+
+Use concrete capability bullets such as:
 
 ```md
 ### New Capabilities
@@ -162,14 +170,13 @@ To work well, use concrete bullets such as:
 - org-catalog: Add SSO-related org metadata
 ```
 
-## Overwrite behavior
+## Archived change support
 
-If a target file already exists:
-- interactive Pi sessions ask before overwriting
-- `--force` overwrites immediately
+If you use `/osp-show` with an archived change name, the extension falls back to reading the archived change files directly and displays the archived proposal/design/tasks content.
 
 ## Notes
 
 - The extension disables OpenSpec telemetry for spawned commands with `OPENSPEC_TELEMETRY=0`.
 - It auto-detects `openspec/` in the current repo and injects lightweight OpenSpec context for the agent.
+- The command names are intentionally short (`osp-*`) for faster use inside Pi.
 - This extension is meant to improve day-to-day authoring ergonomics around OpenSpec, not replace OpenSpec’s file structure or validation model.
