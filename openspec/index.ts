@@ -181,6 +181,60 @@ function postCommandOutput(pi: ExtensionAPI, title: string, body: string) {
 	});
 }
 
+function extractTaggedBlock(text: string, tag: string): string | undefined {
+	const match = text.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, "i"));
+	return match?.[1]?.trim();
+}
+
+function extractOutputPath(text: string): string | undefined {
+	const match = text.match(/Write to:\s*(.+)/i);
+	return match?.[1]?.trim();
+}
+
+async function scaffoldArtifactFromInstructions(
+	pi: ExtensionAPI,
+	ctx: { cwd: string; hasUI: boolean; ui: { notify: (message: string, level?: "info" | "success" | "warning" | "error") => void; confirm: (title: string, message: string) => Promise<boolean> } },
+	artifact: string,
+	change: string,
+	force = false,
+) {
+	const result = await runOpenSpec(ctx.cwd, buildOpenSpecArgs({ action: "instructions", artifact, itemName: change }));
+	if (result.code !== 0) {
+		ctx.ui.notify(`OpenSpec instructions failed: ${artifact}`, "error");
+		postCommandOutput(pi, `OpenSpec instructions for ${artifact} (${change})`, result.combined);
+		return;
+	}
+
+	const outputPath = extractOutputPath(result.combined);
+	const template = extractTaggedBlock(result.combined, "template");
+	if (!outputPath || !template) {
+		ctx.ui.notify(`Could not extract scaffold template for ${artifact}`, "error");
+		postCommandOutput(pi, `OpenSpec instructions for ${artifact} (${change})`, result.combined);
+		return;
+	}
+
+		if ((await pathExists(outputPath)) && !force) {
+			let overwrite = false;
+			if (ctx.hasUI) {
+				overwrite = await ctx.ui.confirm("Overwrite existing file?", `${outputPath} already exists. Replace it with the OpenSpec template?`);
+			}
+			if (!overwrite) {
+				ctx.ui.notify(`Skipped ${artifact}; file already exists`, "warning");
+				postCommandOutput(pi, `OpenSpec instructions for ${artifact} (${change})`, result.combined);
+				return;
+			}
+		}
+
+	await fs.mkdir(path.dirname(outputPath), { recursive: true });
+	await fs.writeFile(outputPath, `${template}\n`, "utf8");
+	ctx.ui.notify(`Scaffolded ${artifact}: ${path.relative(ctx.cwd, outputPath)}`, "success");
+	postCommandOutput(
+		pi,
+		`Scaffolded OpenSpec ${artifact} for ${change}`,
+		[`Path: ${path.relative(ctx.cwd, outputPath)}`, "", template].join("\n"),
+	);
+}
+
 export default function openSpecExtension(pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		const state = await getOpenSpecState(ctx.cwd);
@@ -331,6 +385,45 @@ export default function openSpecExtension(pi: ExtensionAPI) {
 			const result = await runOpenSpec(ctx.cwd, buildOpenSpecArgs({ action: "new_change", itemName: name, description: description || undefined }));
 			ctx.ui.notify(result.code === 0 ? `Created OpenSpec change: ${name}` : `OpenSpec new change failed: ${name}`, result.code === 0 ? "success" : "error");
 			postCommandOutput(pi, `OpenSpec new change ${name}`, result.combined);
+		},
+	});
+
+	pi.registerCommand("openspec-proposal", {
+		description: "Scaffold proposal.md from OpenSpec instructions: /openspec-proposal <change> [--force]",
+		handler: async (args, ctx) => {
+			const parts = parseArgs(args);
+			const change = parts.find((part) => part !== "--force");
+			if (!change) {
+				ctx.ui.notify("Usage: /openspec-proposal <change> [--force]", "warning");
+				return;
+			}
+			await scaffoldArtifactFromInstructions(pi, ctx, "proposal", change, parts.includes("--force"));
+		},
+	});
+
+	pi.registerCommand("openspec-design", {
+		description: "Scaffold design.md from OpenSpec instructions: /openspec-design <change> [--force]",
+		handler: async (args, ctx) => {
+			const parts = parseArgs(args);
+			const change = parts.find((part) => part !== "--force");
+			if (!change) {
+				ctx.ui.notify("Usage: /openspec-design <change> [--force]", "warning");
+				return;
+			}
+			await scaffoldArtifactFromInstructions(pi, ctx, "design", change, parts.includes("--force"));
+		},
+	});
+
+	pi.registerCommand("openspec-tasks", {
+		description: "Scaffold tasks.md from OpenSpec instructions: /openspec-tasks <change> [--force]",
+		handler: async (args, ctx) => {
+			const parts = parseArgs(args);
+			const change = parts.find((part) => part !== "--force");
+			if (!change) {
+				ctx.ui.notify("Usage: /openspec-tasks <change> [--force]", "warning");
+				return;
+			}
+			await scaffoldArtifactFromInstructions(pi, ctx, "tasks", change, parts.includes("--force"));
 		},
 	});
 }

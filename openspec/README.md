@@ -45,8 +45,13 @@ Supported actions:
 - `/openspec-status <change>`
 - `/openspec-instructions <artifact> <change>`
 - `/openspec-new-change <name> [description]`
+- `/openspec-proposal <change> [--force]`
+- `/openspec-design <change> [--force]`
+- `/openspec-tasks <change> [--force]`
 
 ## Notes
 - The extension disables OpenSpec telemetry for spawned commands with `OPENSPEC_TELEMETRY=0`.
 - It auto-detects `openspec/` in the current repo and adds lightweight OpenSpec context for the agent.
+- `/openspec-proposal`, `/openspec-design`, and `/openspec-tasks` scaffold files by extracting the `<template>` and `Write to:` path from `openspec instructions` output.
+- If a target file already exists, the command asks before overwriting unless `--force` is used.
 - This extension is intended to wrap the CLI, not replace native OpenSpec file structures.
