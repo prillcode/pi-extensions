@@ -47,23 +47,23 @@ Supported actions:
 
 ### 2. OpenSpec-aware slash commands
 #### General
-- `/openspec-list [changes|specs]`
-- `/openspec-show <name> [change|spec]`
-- `/openspec-validate [--all|<name>] [change|spec]`
-- `/openspec-status [change]`
-- `/openspec-instructions <artifact> [change]`
-- `/openspec-new-change <name> [description]`
+- `/osp-list [changes|specs]`
+- `/osp-show <name> [change|spec]`
+- `/osp-validate [--all|<name>] [change|spec]`
+- `/osp-status [change]`
+- `/osp-instructions <artifact> [change]`
+- `/osp-new-change <name> [description]`
 
 #### Scaffolding from OpenSpec templates
-- `/openspec-proposal [change] [--force]`
-- `/openspec-design [change] [--force]`
-- `/openspec-tasks [change] [--force]`
-- `/openspec-spec-deltas [change] [--force]`
+- `/osp-proposal [change] [--force]`
+- `/osp-design [change] [--force]`
+- `/osp-tasks [change] [--force]`
+- `/osp-spec-deltas [change] [--force]`
 
 #### Drafting from PRD-style source docs
-- `/openspec-draft-proposal [change] <doc...> [--force]`
-- `/openspec-draft-design [change] <doc...> [--force]`
-- `/openspec-draft-tasks [change] <doc...> [--force]`
+- `/osp-draft-proposal [change] <doc...> [--force]`
+- `/osp-draft-design [change] <doc...> [--force]`
+- `/osp-draft-tasks [change] <doc...> [--force]`
 
 ## Active change convenience
 
@@ -72,9 +72,9 @@ If the repo has exactly **one active OpenSpec change**, the commands that need a
 Example:
 
 ```text
-/openspec-design
-/openspec-status
-/openspec-draft-design docs/prd.md
+/osp-design
+/osp-status
+/osp-draft-design docs/prd.md
 ```
 
 If there are multiple active changes, pass the change name explicitly.
@@ -83,28 +83,28 @@ If there are multiple active changes, pass the change name explicitly.
 
 ### Create a change
 ```text
-/openspec-new-change add-sso "Add SSO support"
+/osp-new-change add-sso "Add SSO support"
 ```
 
 ### Scaffold core artifacts
 ```text
-/openspec-proposal add-sso
-/openspec-design add-sso
-/openspec-tasks add-sso
+/osp-proposal add-sso
+/osp-design add-sso
+/osp-tasks add-sso
 ```
 
 ### Or draft them from a PRD
 ```text
-/openspec-draft-proposal add-sso docs/sso-prd.md
-/openspec-draft-design add-sso docs/sso-prd.md
-/openspec-draft-tasks add-sso docs/sso-prd.md
+/osp-draft-proposal add-sso docs/sso-prd.md
+/osp-draft-design add-sso docs/sso-prd.md
+/osp-draft-tasks add-sso docs/sso-prd.md
 ```
 
 ### Scaffold spec delta files from proposal capabilities
 After you fill in the `Capabilities` section of `proposal.md`:
 
 ```text
-/openspec-spec-deltas add-sso
+/osp-spec-deltas add-sso
 ```
 
 This creates change-scoped spec files under:
@@ -115,8 +115,8 @@ openspec/changes/<change>/specs/<capability>/spec.md
 
 ### Validate
 ```text
-/openspec-validate add-sso change
-/openspec-validate --all
+/osp-validate add-sso change
+/osp-validate --all
 ```
 
 ## Drafting behavior
@@ -138,7 +138,7 @@ The scaffolding commands extract:
 from `openspec instructions` output and write the artifact file for you.
 
 ### Spec deltas
-`/openspec-spec-deltas` reads `proposal.md`, parses the `New Capabilities` and `Modified Capabilities` bullet lists, and creates simple starter `spec.md` files for each listed capability.
+`/osp-spec-deltas` reads `proposal.md`, parses the `New Capabilities` and `Modified Capabilities` bullet lists, and creates simple starter `spec.md` files for each listed capability.
 
 To work well, use concrete bullets such as:
 

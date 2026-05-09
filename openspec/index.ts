@@ -367,7 +367,7 @@ export default function openSpecExtension(pi: ExtensionAPI) {
 					`Specs: ${state.specs.join(", ") || "none"}`,
 					`Active changes: ${state.changes.join(", ") || "none"}`,
 					state.archivedChanges.length ? `Archived changes: ${state.archivedChanges.join(", ")}` : undefined,
-					"Prefer the openspec_cli tool or /openspec-* commands for OpenSpec operations.",
+					"Prefer the openspec_cli tool or /osp-* commands for OpenSpec operations.",
 				]
 					.filter(Boolean)
 					.join("\n"),
@@ -412,8 +412,8 @@ export default function openSpecExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerCommand("openspec-list", {
-		description: "List OpenSpec changes or specs: /openspec-list [changes|specs]",
+	pi.registerCommand("osp-list", {
+		description: "List OpenSpec changes or specs: /osp-list [changes|specs]",
 		getArgumentCompletions: (prefix) => toAutocompleteItems(["changes", "specs"], prefix),
 		handler: async (args, ctx) => {
 			const mode = args.trim() === "specs" ? "specs" : "changes";
@@ -423,14 +423,14 @@ export default function openSpecExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerCommand("openspec-show", {
-		description: "Show an OpenSpec item: /openspec-show <name> [change|spec]",
+	pi.registerCommand("osp-show", {
+		description: "Show an OpenSpec item: /osp-show <name> [change|spec]",
 		handler: async (args, ctx) => {
 			const parts = parseArgs(args);
 			const itemName = parts[0];
 			const itemType = parts[1] === "change" || parts[1] === "spec" ? (parts[1] as "change" | "spec") : undefined;
 			if (!itemName) {
-				ctx.ui.notify("Usage: /openspec-show <name> [change|spec]", "warning");
+				ctx.ui.notify("Usage: /osp-show <name> [change|spec]", "warning");
 				return;
 			}
 			const result = await runOpenSpec(ctx.cwd, buildOpenSpecArgs({ action: "show", itemName, itemType }));
@@ -439,8 +439,8 @@ export default function openSpecExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerCommand("openspec-validate", {
-		description: "Validate OpenSpec items: /openspec-validate [--all|<name>] [change|spec]",
+	pi.registerCommand("osp-validate", {
+		description: "Validate OpenSpec items: /osp-validate [--all|<name>] [change|spec]",
 		handler: async (args, ctx) => {
 			const parts = parseArgs(args);
 			const all = parts.includes("--all") || parts.length === 0;
@@ -453,13 +453,13 @@ export default function openSpecExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerCommand("openspec-status", {
-		description: "Show OpenSpec change artifact status: /openspec-status [change]",
+	pi.registerCommand("osp-status", {
+		description: "Show OpenSpec change artifact status: /osp-status [change]",
 		handler: async (args, ctx) => {
 			const state = await getOpenSpecState(ctx.cwd);
 			const change = resolveChangeArg(parseArgs(args), state);
 			if (!change) {
-				ctx.ui.notify("Usage: /openspec-status [change] (or have exactly one active change)", "warning");
+				ctx.ui.notify("Usage: /osp-status [change] (or have exactly one active change)", "warning");
 				return;
 			}
 			const result = await runOpenSpec(ctx.cwd, buildOpenSpecArgs({ action: "status", itemName: change, json: true }));
@@ -468,15 +468,15 @@ export default function openSpecExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerCommand("openspec-instructions", {
-		description: "Show OpenSpec artifact instructions: /openspec-instructions <artifact> [change]",
+	pi.registerCommand("osp-instructions", {
+		description: "Show OpenSpec artifact instructions: /osp-instructions <artifact> [change]",
 		handler: async (args, ctx) => {
 			const parts = parseArgs(args);
 			const artifact = parts[0];
 			const state = await getOpenSpecState(ctx.cwd);
 			const change = resolveChangeArg(parts.slice(1), state);
 			if (!artifact || !change) {
-				ctx.ui.notify("Usage: /openspec-instructions <artifact> [change] (or have exactly one active change)", "warning");
+				ctx.ui.notify("Usage: /osp-instructions <artifact> [change] (or have exactly one active change)", "warning");
 				return;
 			}
 			const result = await runOpenSpec(ctx.cwd, buildOpenSpecArgs({ action: "instructions", artifact, itemName: change }));
@@ -485,14 +485,14 @@ export default function openSpecExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerCommand("openspec-new-change", {
-		description: "Create a new OpenSpec change: /openspec-new-change <name> [description]",
+	pi.registerCommand("osp-new-change", {
+		description: "Create a new OpenSpec change: /osp-new-change <name> [description]",
 		handler: async (args, ctx) => {
 			const parts = parseArgs(args);
 			const name = parts[0];
 			const description = parts.slice(1).join(" ");
 			if (!name) {
-				ctx.ui.notify("Usage: /openspec-new-change <name> [description]", "warning");
+				ctx.ui.notify("Usage: /osp-new-change <name> [description]", "warning");
 				return;
 			}
 			const result = await runOpenSpec(ctx.cwd, buildOpenSpecArgs({ action: "new_change", itemName: name, description: description || undefined }));
@@ -501,50 +501,50 @@ export default function openSpecExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerCommand("openspec-proposal", {
-		description: "Scaffold proposal.md from OpenSpec instructions: /openspec-proposal [change] [--force]",
+	pi.registerCommand("osp-proposal", {
+		description: "Scaffold proposal.md from OpenSpec instructions: /osp-proposal [change] [--force]",
 		handler: async (args, ctx) => {
 			const parts = parseArgs(args);
 			const state = await getOpenSpecState(ctx.cwd);
 			const change = resolveChangeArg(parts.filter((part) => part !== "--force"), state);
 			if (!change) {
-				ctx.ui.notify("Usage: /openspec-proposal [change] [--force] (or have exactly one active change)", "warning");
+				ctx.ui.notify("Usage: /osp-proposal [change] [--force] (or have exactly one active change)", "warning");
 				return;
 			}
 			await scaffoldArtifactFromInstructions(pi, ctx, "proposal", change, parts.includes("--force"));
 		},
 	});
 
-	pi.registerCommand("openspec-design", {
-		description: "Scaffold design.md from OpenSpec instructions: /openspec-design [change] [--force]",
+	pi.registerCommand("osp-design", {
+		description: "Scaffold design.md from OpenSpec instructions: /osp-design [change] [--force]",
 		handler: async (args, ctx) => {
 			const parts = parseArgs(args);
 			const state = await getOpenSpecState(ctx.cwd);
 			const change = resolveChangeArg(parts.filter((part) => part !== "--force"), state);
 			if (!change) {
-				ctx.ui.notify("Usage: /openspec-design [change] [--force] (or have exactly one active change)", "warning");
+				ctx.ui.notify("Usage: /osp-design [change] [--force] (or have exactly one active change)", "warning");
 				return;
 			}
 			await scaffoldArtifactFromInstructions(pi, ctx, "design", change, parts.includes("--force"));
 		},
 	});
 
-	pi.registerCommand("openspec-tasks", {
-		description: "Scaffold tasks.md from OpenSpec instructions: /openspec-tasks [change] [--force]",
+	pi.registerCommand("osp-tasks", {
+		description: "Scaffold tasks.md from OpenSpec instructions: /osp-tasks [change] [--force]",
 		handler: async (args, ctx) => {
 			const parts = parseArgs(args);
 			const state = await getOpenSpecState(ctx.cwd);
 			const change = resolveChangeArg(parts.filter((part) => part !== "--force"), state);
 			if (!change) {
-				ctx.ui.notify("Usage: /openspec-tasks [change] [--force] (or have exactly one active change)", "warning");
+				ctx.ui.notify("Usage: /osp-tasks [change] [--force] (or have exactly one active change)", "warning");
 				return;
 			}
 			await scaffoldArtifactFromInstructions(pi, ctx, "tasks", change, parts.includes("--force"));
 		},
 	});
 
-	pi.registerCommand("openspec-draft-proposal", {
-		description: "Scaffold proposal.md and ask Pi to draft it from source docs: /openspec-draft-proposal [change] <doc...> [--force]",
+	pi.registerCommand("osp-draft-proposal", {
+		description: "Scaffold proposal.md and ask Pi to draft it from source docs: /osp-draft-proposal [change] <doc...> [--force]",
 		handler: async (args, ctx) => {
 			const parts = parseArgs(args);
 			const force = parts.includes("--force");
@@ -553,7 +553,7 @@ export default function openSpecExtension(pi: ExtensionAPI) {
 			const change = resolveChangeArg(filtered, state);
 			const sourcePaths = change === filtered[0] ? filtered.slice(1) : filtered;
 			if (!change || sourcePaths.length === 0) {
-				ctx.ui.notify("Usage: /openspec-draft-proposal [change] <doc...> [--force] (or have exactly one active change)", "warning");
+				ctx.ui.notify("Usage: /osp-draft-proposal [change] <doc...> [--force] (or have exactly one active change)", "warning");
 				return;
 			}
 			const outputPath = await scaffoldArtifactFromInstructions(pi, ctx, "proposal", change, force);
@@ -565,8 +565,8 @@ export default function openSpecExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerCommand("openspec-draft-design", {
-		description: "Scaffold design.md and ask Pi to draft it from source docs: /openspec-draft-design [change] <doc...> [--force]",
+	pi.registerCommand("osp-draft-design", {
+		description: "Scaffold design.md and ask Pi to draft it from source docs: /osp-draft-design [change] <doc...> [--force]",
 		handler: async (args, ctx) => {
 			const parts = parseArgs(args);
 			const force = parts.includes("--force");
@@ -575,7 +575,7 @@ export default function openSpecExtension(pi: ExtensionAPI) {
 			const change = resolveChangeArg(filtered, state);
 			const sourcePaths = change === filtered[0] ? filtered.slice(1) : filtered;
 			if (!change || sourcePaths.length === 0) {
-				ctx.ui.notify("Usage: /openspec-draft-design [change] <doc...> [--force] (or have exactly one active change)", "warning");
+				ctx.ui.notify("Usage: /osp-draft-design [change] <doc...> [--force] (or have exactly one active change)", "warning");
 				return;
 			}
 			const outputPath = await scaffoldArtifactFromInstructions(pi, ctx, "design", change, force);
@@ -587,8 +587,8 @@ export default function openSpecExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerCommand("openspec-draft-tasks", {
-		description: "Scaffold tasks.md and ask Pi to draft it from source docs: /openspec-draft-tasks [change] <doc...> [--force]",
+	pi.registerCommand("osp-draft-tasks", {
+		description: "Scaffold tasks.md and ask Pi to draft it from source docs: /osp-draft-tasks [change] <doc...> [--force]",
 		handler: async (args, ctx) => {
 			const parts = parseArgs(args);
 			const force = parts.includes("--force");
@@ -597,7 +597,7 @@ export default function openSpecExtension(pi: ExtensionAPI) {
 			const change = resolveChangeArg(filtered, state);
 			const sourcePaths = change === filtered[0] ? filtered.slice(1) : filtered;
 			if (!change || sourcePaths.length === 0) {
-				ctx.ui.notify("Usage: /openspec-draft-tasks [change] <doc...> [--force] (or have exactly one active change)", "warning");
+				ctx.ui.notify("Usage: /osp-draft-tasks [change] <doc...> [--force] (or have exactly one active change)", "warning");
 				return;
 			}
 			const outputPath = await scaffoldArtifactFromInstructions(pi, ctx, "tasks", change, force);
@@ -609,15 +609,15 @@ export default function openSpecExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerCommand("openspec-spec-deltas", {
-		description: "Scaffold change spec files from proposal capabilities: /openspec-spec-deltas [change] [--force]",
+	pi.registerCommand("osp-spec-deltas", {
+		description: "Scaffold change spec files from proposal capabilities: /osp-spec-deltas [change] [--force]",
 		handler: async (args, ctx) => {
 			const parts = parseArgs(args);
 			const force = parts.includes("--force");
 			const state = await getOpenSpecState(ctx.cwd);
 			const change = resolveChangeArg(parts.filter((part) => part !== "--force"), state);
 			if (!change) {
-				ctx.ui.notify("Usage: /openspec-spec-deltas [change] [--force] (or have exactly one active change)", "warning");
+				ctx.ui.notify("Usage: /osp-spec-deltas [change] [--force] (or have exactly one active change)", "warning");
 				return;
 			}
 			await scaffoldSpecDeltasFromProposal(pi, ctx, change, force);
