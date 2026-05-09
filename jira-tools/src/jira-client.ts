@@ -10,6 +10,7 @@ import type {
   JiraGetIssueParams,
   JiraIssueSummary,
   JiraSearchIssuesParams,
+  JiraSprintInfo,
 } from './types.js';
 
 const DEFAULT_QUERY_FIELDS = [
@@ -26,6 +27,10 @@ interface JiraSearchResponse {
     key: string;
     fields?: Record<string, unknown>;
   }>;
+  total?: number;
+  maxResults?: number;
+  nextPageToken?: string;
+  isLast?: boolean;
 }
 
 interface JiraIssueResponse {
@@ -71,6 +76,10 @@ function buildJql(jql: string, projectKey?: string): string {
   return `project = ${projectKey} AND ${filterPart} ${orderByPart}`;
 }
 
+function escapeJqlString(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
 function getIssueBrowseUrl(issueKey: string): string {
   return `${getJiraConfig().instanceUrl}/browse/${issueKey}`;
 }
@@ -112,18 +121,42 @@ function asNumber(value: unknown): number | null {
   return typeof value === 'number' ? value : null;
 }
 
-function normalizeSprintNames(value: unknown): string[] {
+function normalizeSprintDetails(value: unknown): JiraSprintInfo[] {
   if (!Array.isArray(value)) return [];
 
-  return value
-    .map((entry) => {
-      const sprint = asRecord(entry);
-      if (sprint) {
-        return asString(sprint.name);
+  const sprintDetails: JiraSprintInfo[] = [];
+
+  for (const entry of value) {
+    const sprint = asRecord(entry);
+    if (!sprint) {
+      const rawName = asString(entry);
+      if (rawName) {
+        sprintDetails.push({ name: rawName });
       }
-      return asString(entry);
-    })
-    .filter((name): name is string => Boolean(name));
+      continue;
+    }
+
+    const name = asString(sprint.name);
+    if (!name) {
+      continue;
+    }
+
+    sprintDetails.push({
+      id: asString(sprint.id) || undefined,
+      name,
+      state: asString(sprint.state),
+      goal: asString(sprint.goal),
+      startDate: asString(sprint.startDate),
+      endDate: asString(sprint.endDate),
+      completeDate: asString(sprint.completeDate),
+    });
+  }
+
+  return sprintDetails;
+}
+
+function normalizeSprintNames(value: unknown): string[] {
+  return normalizeSprintDetails(value).map((sprint) => sprint.name);
 }
 
 function extractAdfText(value: unknown): string | null {
@@ -175,6 +208,7 @@ function normalizeIssue(
   const assignee = asRecord(fields.assignee);
   const status = asRecord(fields.status);
   const issueType = asRecord(fields.issuetype);
+  const sprintDetails = normalizeSprintDetails(fields.customfield_10020);
 
   return {
     key: issue.key,
@@ -184,17 +218,23 @@ function normalizeIssue(
     assigneeEmail: asString(assignee?.emailAddress),
     storyPoints: asNumber(fields.customfield_10059),
     issueType: asString(issueType?.name),
-    sprints: normalizeSprintNames(fields.customfield_10020),
+    sprints: sprintDetails.length > 0 ? sprintDetails.map((sprint) => sprint.name) : normalizeSprintNames(fields.customfield_10020),
+    sprintDetails,
     url: getIssueBrowseUrl(issue.key),
     description: options?.includeDescription ? extractAdfText(fields.description) : undefined,
   };
 }
 
-export async function searchJiraIssues(params: JiraSearchIssuesParams): Promise<JiraIssueSummary[]> {
+async function searchJiraIssuesPage(params: {
+  jql: string;
+  projectKey?: string;
+  maxResults: number;
+  nextPageToken?: string;
+  fields: readonly string[];
+}): Promise<JiraSearchResponse> {
   const config = getJiraConfig();
   const authHeader = await getJiraBasicAuthHeader();
   const jql = buildJql(params.jql, params.projectKey);
-  const maxResults = params.maxResults ?? 50;
 
   const response = await fetch(`${config.instanceUrl}/rest/api/3/search/jql`, {
     method: 'POST',
@@ -205,8 +245,9 @@ export async function searchJiraIssues(params: JiraSearchIssuesParams): Promise<
     },
     body: JSON.stringify({
       jql,
-      maxResults,
-      fields: [...DEFAULT_QUERY_FIELDS],
+      maxResults: params.maxResults,
+      fields: [...params.fields],
+      ...(params.nextPageToken ? { nextPageToken: params.nextPageToken } : {}),
     }),
   });
 
@@ -215,8 +256,74 @@ export async function searchJiraIssues(params: JiraSearchIssuesParams): Promise<
     throw new Error(`Jira search failed (${response.status}): ${errorText}`);
   }
 
-  const data = (await response.json()) as JiraSearchResponse;
-  return (data.issues || []).map(normalizeIssue);
+  return (await response.json()) as JiraSearchResponse;
+}
+
+async function searchAllJiraIssues(params: {
+  jql: string;
+  projectKey?: string;
+  fields?: readonly string[];
+  pageSize?: number;
+}): Promise<JiraIssueSummary[]> {
+  const fields = params.fields ?? DEFAULT_QUERY_FIELDS;
+  const pageSize = params.pageSize ?? 100;
+  const normalizedIssues: JiraIssueSummary[] = [];
+  let nextPageToken: string | undefined;
+  let isFirstPage = true;
+
+  while (isFirstPage || nextPageToken) {
+    const page = await searchJiraIssuesPage({
+      jql: params.jql,
+      projectKey: params.projectKey,
+      maxResults: pageSize,
+      nextPageToken,
+      fields,
+    });
+
+    const pageIssues = (page.issues || []).map((issue) => normalizeIssue(issue));
+    normalizedIssues.push(...pageIssues);
+
+    if ((page.issues?.length ?? 0) === 0 || page.isLast === true) {
+      break;
+    }
+
+    nextPageToken = page.nextPageToken;
+    isFirstPage = false;
+
+    if (!nextPageToken) {
+      break;
+    }
+  }
+
+  return normalizedIssues;
+}
+
+export async function searchJiraIssues(params: JiraSearchIssuesParams): Promise<JiraIssueSummary[]> {
+  const page = await searchJiraIssuesPage({
+    jql: params.jql,
+    projectKey: params.projectKey,
+    maxResults: params.maxResults ?? 50,
+    fields: DEFAULT_QUERY_FIELDS,
+  });
+
+  return (page.issues || []).map((issue) => normalizeIssue(issue));
+}
+
+export async function searchDoneSprintIssues(sprintNames: string[], projectKey?: string): Promise<JiraIssueSummary[]> {
+  const cleanedSprintNames = sprintNames.map((name) => name.trim()).filter(Boolean);
+
+  if (cleanedSprintNames.length === 0) {
+    throw new Error('searchDoneSprintIssues requires at least one sprint name.');
+  }
+
+  const sprintClause = cleanedSprintNames.map((name) => `"${escapeJqlString(name)}"`).join(', ');
+  const jql = `project = ${projectKey || getJiraConfig().defaultProjectKey} AND sprint IN (${sprintClause}) AND status = Done ORDER BY assignee`;
+
+  return searchAllJiraIssues({
+    jql,
+    fields: DEFAULT_QUERY_FIELDS,
+    pageSize: 100,
+  });
 }
 
 export async function getJiraIssue(params: JiraGetIssueParams): Promise<JiraIssueSummary> {

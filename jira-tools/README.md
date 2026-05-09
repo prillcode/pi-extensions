@@ -1,6 +1,6 @@
 # jira-tools pi extension
 
-A pi-native Jira extension for lightweight search, issue creation, and progress logging from inside pi.
+A pi-native Jira/Confluence extension for lightweight search, issue creation, progress logging, and sprint reports from inside pi.
 
 ## Repo / live locations
 - Repo source of truth: `~/dev/pi-skills/pi-extensions/jira-tools/`
@@ -22,14 +22,16 @@ Implemented and working:
 - `jira_search_issues`
 - `jira_get_issue`
 - `jira_add_comment`
-- `jira_create_issue` (first pass)
-- `jira_close` (first pass)
+- `jira_create_issue`
+- `jira_close`
+- `jira_generate_sprint_report`
 - `/jira-status`
 - `/jira-create`
 - `/jira-search`
 - `/jira-get-issue`
 - `/jira-log`
 - `/jira-close`
+- `/jira-sprint-report`
 
 ## Default config
 - Instance URL: `https://tylertech.atlassian.net`
@@ -37,6 +39,7 @@ Implemented and working:
 - Default project key: `MDO`
 - Story points field: `customfield_10059`
 - Sprint field: `customfield_10020`
+- Confluence space key: `MDO`
 
 ## Local auth/config
 Current working auth path is basic auth via either env vars or `~/.pi/agent/jira-tools.json`.
@@ -50,6 +53,14 @@ Example `~/.pi/agent/jira-tools.json`:
   "instanceUrl": "https://tylertech.atlassian.net",
   "cloudId": "748898e2-ca0a-43b6-981b-09e249be204c",
   "defaultProjectKey": "MDO"
+}
+```
+
+Optional combined-token fallback is also supported:
+
+```json
+{
+  "PI_JIRA_ATLASSIAN_TOKEN": "email@example.com:api_token"
 }
 ```
 
@@ -71,88 +82,33 @@ Use `/jira-status` in pi to verify config source and auth readiness.
 ### `jira_search_issues`
 Search Jira using JQL and return normalized issue fields.
 
-Required returned fields:
-- `summary`
-- `assignee`
-- `status`
-- `customfield_10059`
-- `issuetype`
-- `customfield_10020`
-
-Normalized issue output includes:
-- `key`
-- `summary`
-- `status`
-- `assigneeDisplayName`
-- `assigneeEmail`
-- `storyPoints`
-- `issueType`
-- `sprints`
-- `url`
-
 ### `jira_get_issue`
-Get a single Jira issue by key and return the same normalized issue shape as `jira_search_issues`.
-
-Parameters:
-- `issueKey`
-- optional `includeDescription`
-
-Normalized issue output includes:
-- `key`
-- `summary`
-- `status`
-- `assigneeDisplayName`
-- `assigneeEmail`
-- `storyPoints`
-- `issueType`
-- `sprints`
-- `url`
-- optional `description`
+Get a single Jira issue by key and return the normalized issue shape.
 
 ### `jira_add_comment`
 Add a Jira comment to an issue using Atlassian document format.
 
-Returns:
-- `issueKey`
-- `commentId`
-- `url`
-
 ### `jira_create_issue`
 Create a Jira issue.
-
-First-pass supported fields:
-- `summary`
-- `description`
-- `issueType`
-- optional `projectKey`
-- optional `parentKey`
-- optional `labels`
-- optional `assigneeAccountId`
-- optional `storyPoints`
-
-Returns:
-- `key`
-- `url`
 
 ### `jira_close`
 Add a closing comment and transition a Jira issue to `done` or `cancel`.
 
-First-pass supported fields:
-- `issueKey`
-- `resolution` (`done` or `cancel`)
-- `comment`
-- optional `transitionName` override
+### `jira_generate_sprint_report`
+Generate an MDO sprint report markdown file and optionally publish it to Confluence.
+
+Parameters:
+- `sprintNames`
+- optional `outputDir`
+- optional `publish`
 
 Returns:
-- `issueKey`
-- `resolution`
-- `transitionName`
-- `commentId`
-- `url`
-
-Notes:
-- transition names are matched from available Jira transitions for the issue
-- if no match is found, the tool fails and lists available transitions
+- `sprintNames`
+- `filePath`
+- `stats`
+- optional `pageId`
+- optional `pageUrl`
+- optional `pageAction`
 
 ## Slash commands
 
@@ -162,151 +118,44 @@ Show loaded Jira config/auth status.
 ### `/jira-create`
 Interactive helper for explicit Jira issue creation.
 
-Current flow:
-1. select issue type (`Task`, `Story`, `Bug`)
-2. enter summary
-3. enter description
-4. create issue directly
-
-Example:
-```text
-/jira-create
-```
-
-Or prefill the summary:
-```text
-/jira-create CS: AgentCore Debugging and Fixing Errors
-```
-
 ### `/jira-search [optional jql]`
 Interactive helper for explicit Jira search.
-
-Current flow:
-1. enter or edit JQL
-2. enter max results
-3. queue a prompt that explicitly invokes `jira_search_issues`
-
-Examples:
-```text
-/jira-search
-/jira-search project = MDO ORDER BY updated DESC
-```
 
 ### `/jira-get-issue ISSUE-123`
 Interactive helper for retrieving a single Jira issue.
 
-Current flow:
-1. provide or prompt for issue key
-2. choose whether to include description
-3. queue a prompt that explicitly invokes `jira_get_issue`
-
-Examples:
-```text
-/jira-get-issue MDO-719
-/jira-get-issue
-```
-
 ### `/jira-log ISSUE-123 [optional guidance]`
 Queue a prompt that asks pi to summarize the relevant recent session context into a concise Jira progress comment and then call `jira_add_comment`.
-
-Current flow:
-1. provide or prompt for issue key
-2. select comment intent
-3. optionally add extra guidance
-4. queue a prompt that drafts a concise session-grounded comment and posts it
-
-Examples:
-```text
-/jira-log MDO-719
-/jira-log MDO-719 focus on the root cause and deployed fix only
-```
 
 ### `/jira-close ISSUE-123 [done|cancel]`
 Interactive helper that adds a closing comment and transitions the issue.
 
+### `/jira-sprint-report [comma,separated,sprints]`
+Generate the sprint report directly in the extension.
+
 Current flow:
-1. provide or prompt for issue key
-2. provide or select closing resolution (`done` or `cancel`)
-3. choose comment mode:
-   - `Manual`
-   - `AI concise summary`
-4. for manual mode, edit a closing comment directly
-5. for AI mode, select summary focus and optionally add extra guidance
-6. close the issue
+1. provide or prompt for sprint names
+2. enter output directory
+3. choose whether to publish to Confluence
+4. generate the markdown report
+5. optionally create/update the Confluence page
 
 Examples:
 ```text
-/jira-close MDO-719 done
-/jira-close MDO-719 cancel
+/jira-sprint-report 2026.2.1
+/jira-sprint-report 2026.2.1,2026.2.2
 ```
 
-## Working examples
-
-### Natural-language search
-Prompt:
-```text
-Show me the 5 most recently updated Jira issues in MDO.
-```
-
-Equivalent JQL used by the tool:
-```jql
-project = MDO ORDER BY updated DESC
-```
-
-### Get a single issue
-Prompt:
-```text
-Get Jira issue MDO-719 and include the description.
-```
-
-Observed tool-backed result shape:
-```text
-MDO-719: CS: AgentCore Debugging and Fixing Errors
-status: In Progress
-assigneeDisplayName: Example User
-assigneeEmail: example.user@tylertech.com
-storyPoints: unset
-issueType: Task
-sprints: none
-url: https://tylertech.atlassian.net/browse/MDO-719
-description:
-Investigate recent AgentCore/agent-api failures, identify root cause, and implement fixes/guardrails to prevent recurring runtime errors.
-```
-
-### Add progress comment
-Prompt:
-```text
-Add a Jira comment to MDO-695 that says:
-Test comment from pi jira-tools extension on 2026-04-22.
-```
-
-Observed tool-backed result shape:
-```text
-Added Jira comment to MDO-695.
-commentId: 11617939
-url: https://tylertech.atlassian.net/browse/MDO-695?focusedCommentId=11617939
-```
-
-### Create a concise task from session context
-Prompt:
-```text
-Create a Jira Task in MDO with summary "CS: AgentCore Debugging and Fixing Errors" and description that is very concise relevant to this task. We will add a jira comment after with the full context above.
-```
-
-Observed tool-backed result shape:
-```text
-Created Jira Task: MDO-719
-summary: CS: AgentCore Debugging and Fixing Errors
-url: https://tylertech.atlassian.net/browse/MDO-719
-```
-
-Resulting concise description example:
-```text
-Investigate recent AgentCore/agent-api failures, identify root cause, and implement fixes/guardrails to prevent recurring runtime errors.
-```
+## Sprint report behavior
+- JQL: `project = MDO AND sprint IN ("<SPRINT_NAMES>") AND status = Done ORDER BY assignee`
+- groups issues by assignee
+- sums story points from `customfield_10059`
+- tracks issues without points separately
+- writes `sprint-<SPRINT_NAMES>-report.md`
+- publishes to Confluence page title `Sprint Report: <SPRINT_NAMES>` when requested
 
 ## Notes
-- Search is read-first and stable enough for normal use.
-- `jira_add_comment` is useful for logging progress directly from pi.
-- `jira_create_issue` is intentionally first-pass and may still hit Jira project/screen-specific constraints for certain optional fields.
+- Search and issue operations use direct Jira REST.
+- Sprint reports use direct Jira REST plus Confluence REST.
+- Confluence publishing creates or updates an existing page with the same title in the `MDO` space.
 - If you change `~/.pi/agent/jira-tools.json`, reload the extension with `/reload`.

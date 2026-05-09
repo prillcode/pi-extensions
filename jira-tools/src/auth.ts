@@ -13,10 +13,15 @@ export function detectJiraAuthState(): JiraAuthState {
   const claudeCredentialsPath = getClaudeCredentialsPath();
   const config = getJiraConfig();
 
-  if (config.apiToken) {
+  if (config.apiToken || config.atlassianToken) {
     return {
       mode: 'basic-auth-ready',
-      source: config.configSource === 'env' ? 'PI_JIRA_EMAIL + PI_JIRA_API_TOKEN' : config.configPath,
+      source:
+        config.configSource === 'env'
+          ? config.atlassianToken
+            ? 'PI_JIRA_ATLASSIAN_TOKEN'
+            : 'PI_JIRA_EMAIL + PI_JIRA_API_TOKEN'
+          : config.configPath,
       details: `Basic auth is configured for ${config.email} via ${config.configSource}.`,
     };
   }
@@ -26,25 +31,33 @@ export function detectJiraAuthState(): JiraAuthState {
       mode: 'oauth-reuse-candidate',
       source: claudeCredentialsPath,
       details:
-        'Claude Atlassian credentials were found, but direct Jira REST reuse was not validated. Set PI_JIRA_API_TOKEN or ~/.pi/agent/jira-tools.json for the working read path.',
+        'Claude Atlassian credentials were found, but direct Jira REST reuse was not validated. Set PI_JIRA_API_TOKEN, PI_JIRA_ATLASSIAN_TOKEN, or ~/.pi/agent/jira-tools.json for the working read path.',
     };
   }
 
   return {
     mode: 'unconfigured',
-    details: 'Set PI_JIRA_EMAIL and PI_JIRA_API_TOKEN or create ~/.pi/agent/jira-tools.json to enable Jira REST search.',
+    details:
+      'Set PI_JIRA_EMAIL and PI_JIRA_API_TOKEN, set PI_JIRA_ATLASSIAN_TOKEN, or create ~/.pi/agent/jira-tools.json to enable Jira/Confluence REST access.',
   };
 }
 
-export async function getJiraBasicAuthHeader(): Promise<string> {
+export async function getAtlassianBasicAuthHeader(): Promise<string> {
   const config = getJiraConfig();
-  const jiraApiToken = config.apiToken;
 
-  if (!jiraApiToken) {
-    throw new Error(
-      'Missing Jira API token. Set PI_JIRA_API_TOKEN or add apiToken to ~/.pi/agent/jira-tools.json to enable Jira search.',
-    );
+  if (config.atlassianToken) {
+    return `Basic ${Buffer.from(config.atlassianToken, 'utf8').toString('base64')}`;
   }
 
-  return `Basic ${Buffer.from(`${config.email}:${jiraApiToken}`, 'utf8').toString('base64')}`;
+  if (config.apiToken) {
+    return `Basic ${Buffer.from(`${config.email}:${config.apiToken}`, 'utf8').toString('base64')}`;
+  }
+
+  throw new Error(
+    'Missing Atlassian API token. Set PI_JIRA_API_TOKEN, set PI_JIRA_ATLASSIAN_TOKEN, or add one of them to ~/.pi/agent/jira-tools.json to enable Jira/Confluence access.',
+  );
+}
+
+export async function getJiraBasicAuthHeader(): Promise<string> {
+  return getAtlassianBasicAuthHeader();
 }

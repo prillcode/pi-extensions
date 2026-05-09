@@ -1,6 +1,18 @@
 import { Type } from '@mariozechner/pi-ai';
 import { defineTool, type ExtensionAPI } from '@mariozechner/pi-coding-agent';
 
+import { detectJiraAuthState } from './auth.js';
+import { getJiraConfig } from './config.js';
+import {
+  addJiraComment,
+  closeJiraIssue,
+  createJiraIssue,
+  getDefaultQueryFields,
+  getJiraIssue,
+  searchJiraIssues,
+} from './jira-client.js';
+import { generateSprintReport } from './sprint-report.js';
+
 function parseIssueKeyAndGuidance(args: string): { issueKey?: string; guidance?: string } {
   const trimmed = args.trim();
   if (!trimmed) {
@@ -15,21 +27,17 @@ function parseIssueKeyAndGuidance(args: string): { issueKey?: string; guidance?:
   };
 }
 
-import { detectJiraAuthState } from './auth.js';
-import { getJiraConfig } from './config.js';
-import {
-  addJiraComment,
-  closeJiraIssue,
-  createJiraIssue,
-  getDefaultQueryFields,
-  getJiraIssue,
-  searchJiraIssues,
-} from './jira-client.js';
+function parseSprintNames(args: string): string[] {
+  return args
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
 
 const jiraCreateIssueTool = defineTool({
   name: 'jira_create_issue',
   label: 'Jira Create Issue',
-  description: 'Create a Jira issue. Scaffolded now; real auth/API behavior will be added next.',
+  description: 'Create a Jira issue.',
   parameters: Type.Object({
     summary: Type.String({ description: 'Issue summary/title' }),
     description: Type.String({ description: 'Issue description/body text' }),
@@ -46,11 +54,7 @@ const jiraCreateIssueTool = defineTool({
       content: [
         {
           type: 'text',
-          text: [
-            `Created Jira ${params.issueType}: ${created.key}`,
-            `summary: ${params.summary}`,
-            `url: ${created.url}`,
-          ].join('\n'),
+          text: [`Created Jira ${params.issueType}: ${created.key}`, `summary: ${params.summary}`, `url: ${created.url}`].join('\n'),
         },
       ],
       details: created,
@@ -153,11 +157,7 @@ const jiraAddCommentTool = defineTool({
       content: [
         {
           type: 'text',
-          text: [
-            `Added Jira comment to ${result.issueKey}.`,
-            `commentId: ${result.commentId}`,
-            `url: ${result.url}`,
-          ].join('\n'),
+          text: [`Added Jira comment to ${result.issueKey}.`, `commentId: ${result.commentId}`, `url: ${result.url}`].join('\n'),
         },
       ],
       details: result,
@@ -199,6 +199,37 @@ const jiraCloseTool = defineTool({
   },
 });
 
+const jiraGenerateSprintReportTool = defineTool({
+  name: 'jira_generate_sprint_report',
+  label: 'Jira Generate Sprint Report',
+  description: 'Generate an MDO sprint report markdown file and optionally publish it to Confluence.',
+  parameters: Type.Object({
+    sprintNames: Type.Array(Type.String({ description: 'Sprint name, e.g. 2026.2.1' })),
+    outputDir: Type.Optional(Type.String({ description: 'Output directory for the markdown report' })),
+    publish: Type.Optional(Type.Boolean({ description: 'Whether to publish the report to Confluence' })),
+  }),
+  async execute(_toolCallId, params) {
+    const result = await generateSprintReport(params);
+    return {
+      content: [
+        {
+          type: 'text',
+          text: [
+            `Generated sprint report for: ${result.sprintNames.join(', ')}`,
+            `filePath: ${result.filePath}`,
+            `totalIssues: ${result.stats.totalIssues}`,
+            `totalStoryPoints: ${result.stats.totalStoryPoints}`,
+            `teamMemberCount: ${result.stats.teamMemberCount}`,
+            `issuesWithoutPoints: ${result.stats.issuesWithoutPoints}`,
+            result.pageUrl ? `confluence: ${result.pageAction} ${result.pageUrl}` : 'confluence: not published',
+          ].join('\n'),
+        },
+      ],
+      details: result,
+    };
+  },
+});
+
 export default function jiraToolsExtension(pi: ExtensionAPI) {
   const config = getJiraConfig();
 
@@ -207,6 +238,7 @@ export default function jiraToolsExtension(pi: ExtensionAPI) {
   pi.registerTool(jiraGetIssueTool);
   pi.registerTool(jiraAddCommentTool);
   pi.registerTool(jiraCloseTool);
+  pi.registerTool(jiraGenerateSprintReportTool);
 
   pi.registerCommand('jira-status', {
     description: 'Show Jira extension config and auth scaffold status',
@@ -265,7 +297,8 @@ export default function jiraToolsExtension(pi: ExtensionAPI) {
   pi.registerCommand('jira-search', {
     description: 'Run a Jira search with explicit JQL and max results helper prompts',
     handler: async (args, ctx) => {
-      const jql = args.trim() || (await ctx.ui.editor('Jira JQL', `project = ${config.defaultProjectKey} ORDER BY updated DESC`)) || '';
+      const jql =
+        args.trim() || (await ctx.ui.editor('Jira JQL', `project = ${config.defaultProjectKey} ORDER BY updated DESC`)) || '';
       if (!jql.trim()) {
         ctx.ui.notify('jira-search requires JQL.', 'warning');
         return;
@@ -448,6 +481,36 @@ export default function jiraToolsExtension(pi: ExtensionAPI) {
         pi.sendUserMessage(prompt);
       } else {
         pi.sendUserMessage(prompt, { deliverAs: 'followUp' });
+      }
+    },
+  });
+
+  pi.registerCommand('jira-sprint-report', {
+    description: 'Generate an MDO sprint report markdown file and optionally publish it to Confluence',
+    handler: async (args, ctx) => {
+      const sprintInput = args.trim() || (await ctx.ui.input('Sprint name(s), comma-separated', '2026.2.1')) || '';
+      const sprintNames = parseSprintNames(sprintInput);
+      if (sprintNames.length === 0) {
+        ctx.ui.notify('jira-sprint-report requires at least one sprint name.', 'warning');
+        return;
+      }
+
+      const outputDir = (await ctx.ui.input('Output directory', './')) || './';
+      const publishChoice = await ctx.ui.select('Publish to Confluence?', ['No', 'Yes']);
+      if (!publishChoice) {
+        ctx.ui.notify('Cancelled jira-sprint-report.', 'warning');
+        return;
+      }
+
+      const result = await generateSprintReport({
+        sprintNames,
+        outputDir,
+        publish: publishChoice === 'Yes',
+      });
+
+      ctx.ui.notify(`Sprint report written: ${result.filePath}`, 'info');
+      if (result.pageUrl) {
+        ctx.ui.notify(`Confluence ${result.pageAction}: ${result.pageUrl}`, 'info');
       }
     },
   });

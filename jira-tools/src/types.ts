@@ -1,3 +1,13 @@
+export interface JiraSprintInfo {
+  id?: string;
+  name: string;
+  state?: string | null;
+  goal?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
+  completeDate?: string | null;
+}
+
 export interface JiraIssueSummary {
   key: string;
   summary: string;
@@ -7,6 +17,7 @@ export interface JiraIssueSummary {
   storyPoints?: number | null;
   issueType?: string | null;
   sprints?: string[];
+  sprintDetails?: JiraSprintInfo[];
   url?: string;
   description?: string | null;
 }
@@ -73,7 +84,31 @@ export interface JiraAuthState {
 export interface JiraLocalConfigFile {
   email?: string;
   apiToken?: string;
+  atlassianToken?: string;
+  PI_JIRA_ATLASSIAN_TOKEN?: string;
   instanceUrl?: string;
   cloudId?: string;
   defaultProjectKey?: string;
+}
+
+export interface JiraGenerateSprintReportParams {
+  sprintNames: string[];
+  outputDir?: string;
+  publish?: boolean;
+}
+
+export interface JiraSprintReportStats {
+  totalIssues: number;
+  totalStoryPoints: number;
+  teamMemberCount: number;
+  issuesWithoutPoints: number;
+}
+
+export interface JiraGenerateSprintReportResult {
+  sprintNames: string[];
+  filePath: string;
+  stats: JiraSprintReportStats;
+  pageId?: string;
+  pageUrl?: string;
+  pageAction?: 'created' | 'updated';
 }
