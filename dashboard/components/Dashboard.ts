@@ -4,10 +4,10 @@
  * Tabs: 1:Tasks  2:Sessions  3:Git  4:Brain  5:Info
  */
 
-import type { AssistantMessage } from "@mariozechner/pi-ai";
-import type { ExtensionContext, ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Key, matchesKey, visibleWidth, truncateToWidth, Container, Text, SelectList, type SelectItem } from "@mariozechner/pi-tui";
-import { DynamicBorder } from "@mariozechner/pi-coding-agent";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { ExtensionContext, ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Key, matchesKey, visibleWidth, truncateToWidth, Container, Text, SelectList, type SelectItem } from "@earendil-works/pi-tui";
+import { DynamicBorder } from "@earendil-works/pi-coding-agent";
 import type { TodoItem, DashboardTab } from "../types.js";
 import { GitPanel } from "./GitPanel.js";
 import { SessionPanel } from "./SessionPanel.js";

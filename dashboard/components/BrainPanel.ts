@@ -2,9 +2,9 @@
  * BrainPanel Component - View project brain memory + brain-sync actions
  */
 
-import type { ExtensionContext, ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Container, Text, SelectList, truncateToWidth, visibleWidth, type SelectItem } from "@mariozechner/pi-tui";
-import { DynamicBorder } from "@mariozechner/pi-coding-agent";
+import type { ExtensionContext, ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Container, Text, SelectList, truncateToWidth, visibleWidth, type SelectItem } from "@earendil-works/pi-tui";
+import { DynamicBorder } from "@earendil-works/pi-coding-agent";
 import {
 	resolveBrainProject,
 	listBrainFiles,

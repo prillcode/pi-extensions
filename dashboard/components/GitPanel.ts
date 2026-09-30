@@ -2,9 +2,9 @@
  * GitPanel Component - Git integration UI
  */
 
-import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { Container, Text, SelectList, type SelectItem } from "@mariozechner/pi-tui";
-import { DynamicBorder } from "@mariozechner/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Container, Text, SelectList, type SelectItem } from "@earendil-works/pi-tui";
+import { DynamicBorder } from "@earendil-works/pi-coding-agent";
 import {
 	getGitStatus,
 	getRecentCommits,

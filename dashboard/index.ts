@@ -5,9 +5,9 @@
  * Shortcuts: Ctrl+Shift+D (dashboard), Ctrl+Shift+T (task widget)
  */
 
-import type { AssistantMessage } from "@mariozechner/pi-ai";
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { DynamicBorder } from "@mariozechner/pi-coding-agent";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { DynamicBorder } from "@earendil-works/pi-coding-agent";
 import {
 	Container,
 	Key,
@@ -16,7 +16,7 @@ import {
 	SelectList,
 	visibleWidth,
 	truncateToWidth,
-} from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-tui";
 import type { TodoItem } from "./types.js";
 import { DashboardComponent } from "./components/Dashboard.js";
 

@@ -2,7 +2,7 @@
  * Sessions utility module - Pi session management
  */
 
-import { SessionManager } from "@mariozechner/pi-coding-agent";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { readFileSync } from "node:fs";
 
 export interface SessionInfo {

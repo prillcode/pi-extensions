@@ -2,9 +2,9 @@
  * SessionPanel Component - Pi session management UI
  */
 
-import type { ExtensionContext, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
-import { Container, Text, SelectList, type SelectItem } from "@mariozechner/pi-tui";
-import { DynamicBorder } from "@mariozechner/pi-coding-agent";
+import type { ExtensionContext, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { Container, Text, SelectList, type SelectItem } from "@earendil-works/pi-tui";
+import { DynamicBorder } from "@earendil-works/pi-coding-agent";
 import {
 	listSessions,
 	formatSessionName,

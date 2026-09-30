@@ -20,9 +20,24 @@ A TUI dashboard extension for pi with integrated workflows.
 
 ## Installation
 
+This extension lives in the pi-skills repo at `~/dev/pi-skills/pi-extensions/dashboard/`.
+
+Sync it into pi's live extension directory:
+
 ```bash
-# From the pi-skills repo
-ln -s "$(pwd)/extensions/dashboard" ~/.pi/agent/extensions/dashboard
+~/dev/pi-skills/pi-extensions/sync-to-pi-agent.sh dashboard
+```
+
+Then reload pi:
+
+```text
+/reload
+```
+
+Alternatively, symlink the repo copy:
+
+```bash
+ln -s "$HOME/dev/pi-skills/pi-extensions/dashboard" ~/.pi/agent/extensions/dashboard
 ```
 
 ## Commands
@@ -57,7 +72,8 @@ dashboard/
 ├── components/
 │   ├── Dashboard.ts      # Main dashboard component
 │   ├── GitPanel.ts       # Git integration UI
-│   └── SessionPanel.ts   # Session management UI
+│   ├── SessionPanel.ts   # Session management UI
+│   └── BrainPanel.ts     # Brain/memory panel UI
 ├── utils/
 │   ├── git.ts            # Git command wrappers
 │   └── sessions.ts       # Session management utilities
