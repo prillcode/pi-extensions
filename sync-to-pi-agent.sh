@@ -19,7 +19,7 @@ Copies extension source from:
 into:
   $DEST_BASE/<extension-name>
 
-This keeps your pi-skills repo as the editable source of truth and syncs it into
+This keeps your pi-extensions repo as the editable source of truth and syncs it into
 pi's live auto-discovery extension directory for testing.
 EOF
 }
@@ -31,6 +31,11 @@ sync_one() {
 
   if [[ ! -d "$src" ]]; then
     echo "Source extension not found: $src" >&2
+    exit 1
+  fi
+
+  if [[ -L "$DEST_BASE/$ext" ]]; then
+    echo "Refusing symlink destination: $DEST_BASE/$ext (replace it with a real directory before syncing)" >&2
     exit 1
   fi
 
