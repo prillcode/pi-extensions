@@ -39,6 +39,7 @@ sync_one() {
     --exclude node_modules \
     --exclude .DS_Store \
     --exclude dist \
+    --exclude docs \
     "$src" "$dest"
 
   echo "Synced $ext -> $dest"
