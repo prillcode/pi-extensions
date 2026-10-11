@@ -1,87 +1,52 @@
 # Maestro router extension
 
-A Pi virtual model that routes each turn across model tiers by task difficulty. Tiers are
-config-driven and can mix providers freely.
+A Pi virtual model that uses TypeSafe's Jev to classify each new task, then delegates execution to one of three named OmniRoute combos. Maestro selects the tier; OmniRoute selects a provider/model within that combo and owns execution fallback.
 
-Select it as `router/maestro`. For every new user message it classifies the requested work with
-TypeSafe's Jev (via the authenticated `openrouter` provider) and starts the turn on a tier:
+## Tier behavior (example snapshot)
 
-| Tier | Default model | Then |
+> This table is a snapshot of one example setup, not the source of truth. Combo target order is stored in OmniRoute and edited there; this extension only references the combo names.
+
+| Tier | OmniRoute combo | Ordered targets (priority) |
 |---|---|---|
-| routine | `opencode-go/deepseek-v4-flash` | stays on the workhorse |
-| standard | `openai-codex/gpt-6-luna` | after the first successful `edit`/`write`, the rest of the turn drops to the workhorse tier |
-| complex | `openai-codex/gpt-6-sol` | stays on the senior model for the whole turn |
+| routine | `omniroute/maestro-routine` | `opencode-go/deepseek-v4-flash` → `openrouter/deepseek/deepseek-v4-flash` → `cloudflare-ai/@cf/qwen/qwen2.5-coder-32b-instruct` |
+| standard | `omniroute/maestro-standard` | `opencode-go/deepseek-v4-pro` → `openrouter/openai/gpt-6-luna` → `cloudflare-ai/@cf/moonshotai/kimi-k2.6` |
+| complex | `omniroute/maestro-complex` | `opencode-go/kimi-k3` → `openrouter/openai/gpt-6.1-sol` → `openrouter/anthropic/claude-opus-5.5` |
 
-Continuations and retries reuse the turn's tier so the provider prompt cache stays valid.
-Compaction and other out-of-loop calls go to the workhorse. Short approval replies ("continue",
-"go ahead") keep the previous turn's tier instead of reclassifying. If Jev is unreachable, a
-keyword/length heuristic decides the tier.
+The combos use OmniRoute's `priority` strategy. A standard turn hands implementation to the routine combo after its first successful `edit`/`write`; complex and routine turns stay in their selected tier. Retries stay on the same combo so OmniRoute can handle fallback. Compaction uses the routine combo. Short approval replies retain the previous branch's tier. If Jev is unavailable, a keyword/length heuristic chooses a tier.
 
-## Locations
-
-- Repo source of truth: `~/dev/pi-skills/pi-extensions/maestro-router/`
-- Live Pi extension: `~/.pi/agent/extensions/maestro-router/`
-
-Sync to the live Pi extensions directory:
-
-```bash
-~/dev/pi-skills/pi-extensions/sync-to-pi-agent.sh maestro-router
-```
-
-Then reload Pi:
-
-```text
-/reload
-```
+The combo target order is operational configuration stored in OmniRoute, not in this extension. Provider availability and cost are tracked in OmniRoute; Pi's combo-level price estimate is not the source of truth.
 
 ## Prerequisites
 
-- Credentials for whatever providers the configured tiers use (defaults: `opencode-go` and
-  `openai-codex`).
-- An authenticated `openrouter` credential for the Jev classifier
-  (`openrouter/typesafe/jev-1.13`). Without it the extension falls back to the keyword heuristic.
+- OmniRoute running at `http://127.0.0.1:20128` with the three combos above.
+- `~/.pi/agent/models.json` defining provider `omniroute` and exposing those combo IDs. The local installation uses `~/.omniroute/pi.key` as its API key; never commit that key.
+- An authenticated `openrouter` credential for Jev (`openrouter/typesafe/jev-1.13`). Without it the extension falls back to the keyword heuristic.
+
+## Locations and sync
+
+- Repo source: `~/dev/pi-extensions/maestro-router/`
+- Live extension: `~/.pi/agent/extensions/maestro-router/`
+
+Sync after changing the source:
+
+```bash
+~/dev/pi-extensions/sync-to-pi-agent.sh maestro-router
+```
+
+Then run `/reload` in Pi. Select the virtual model as `router/maestro` or start with:
+
+```bash
+pi --model router/maestro
+```
+
+## Configuration
+
+Tier combo names are in `TIERS` at the top of `index.ts`. `WORKHORSE` controls the tier standard work hands off to. `CLASSIFIER_CANDIDATES` selects Jev candidates; `COMPLEX_HINTS`, `ROUTINE_HINTS`, and `APPROVAL` control the heuristic and approval handling.
+
+Maestro intentionally has no cross-tier fallback: a missing combo or OmniRoute authentication error is reported, not silently routed to a different tier. Configure fallback targets inside each OmniRoute combo.
 
 Check the routed catalog with:
 
 ```bash
 pi --list-models maestro
 ```
-
-## Configuration
-
-Everything lives at the top of `index.ts`. Tiers are `{ provider, id }` pairs, so you can point
-each tier at any provider's model:
-
-```ts
-const TIERS: Record<TierName, TierModel> = {
-  routine: { provider: "opencode-go", id: "deepseek-v4-flash" },
-  standard: { provider: "openai-codex", id: "gpt-6-luna" },
-  complex: { provider: "openai-codex", id: "gpt-6-sol" },
-};
-```
-
-- `WORKHORSE` — the tier a standard turn hands off to after its first edit (default `routine`).
-- `FALLBACK_ORDER` — which tiers to try when the preferred tier has no credentials. A missing
-  provider key degrades to another tier instead of breaking the turn.
-- `CLASSIFIER_CANDIDATES` — Jev candidates, first one present wins; set to `[]` to force the
-  heuristic.
-- `COMPLEX_HINTS` / `ROUTINE_HINTS` — keyword tables used when Jev is unavailable.
-- `APPROVAL` — short replies that continue the previous turn's tier.
-- `contextWindow` / `maxTokens` — declared on the virtual model; keep the context window at or
-  below the smallest configured tier.
-
-## Usage
-
-Select the model in Pi:
-
-```text
-/model
-```
-
-Choose **Maestro**, or start Pi directly with:
-
-```bash
-pi --model router/maestro
-```
-
-Press `Ctrl+S` in the model picker to save it as the default for new sessions.

@@ -18,9 +18,9 @@
  * Compaction and other requests outside the agent loop go to the workhorse. Short approval
  * follow-ups ("continue", "go ahead") keep the previous turn's tier instead of reclassifying.
  *
- * Tiers are configured in TIERS below. Each tier is a { provider, id } pair, so tiers can mix
- * providers freely. If a tier's model has no credentials, FALLBACK_ORDER decides which other
- * tiers to try instead, so a missing key degrades rather than breaking the turn.
+ * Tiers are named OmniRoute combos. Maestro chooses the tier; OmniRoute chooses the execution
+ * provider/model and handles fallback within that combo. Missing combos/auth fail explicitly
+ * rather than silently running a different tier.
  *
  * Usage: `pi --model router/maestro`
  */
@@ -46,20 +46,13 @@ interface TierModel {
 
 /** The model answering each tier. Mix providers freely. */
 const TIERS: Record<TierName, TierModel> = {
-	routine: { provider: "opencode-go", id: "deepseek-v4-flash" },
-	standard: { provider: "openai-codex", id: "gpt-6-luna" },
-	complex: { provider: "openai-codex", id: "gpt-6-sol" },
+	routine: { provider: "omniroute", id: "maestro-routine" },
+	standard: { provider: "omniroute", id: "maestro-standard" },
+	complex: { provider: "omniroute", id: "maestro-complex" },
 };
 
 /** Tier a standard turn drops to after its first successful edit. */
 const WORKHORSE: TierName = "routine";
-
-/** Order in which tiers are tried when the preferred tier has no credentials. */
-const FALLBACK_ORDER: Record<TierName, readonly TierName[]> = {
-	routine: ["routine", "standard", "complex"],
-	standard: ["standard", "complex", "routine"],
-	complex: ["complex", "standard", "routine"],
-};
 
 /** Jev classifier candidates, first one present in the catalog wins. */
 const CLASSIFIER_CANDIDATES: ReadonlyArray<{ provider: string; id: string }> = [
@@ -101,32 +94,13 @@ function tierOf(model?: { provider: string; id: string }): TierName | undefined 
 	return model ? TIER_BY_MODEL.get(`${model.provider}/${model.id}`) : undefined;
 }
 
-/** First tier in the fallback order whose model exists and has credentials. */
-function resolveTier(
-	ctx: ExtensionContext,
-	name: TierName,
-): { tier: TierName; model: Model<Api> } | undefined {
-	for (const tier of FALLBACK_ORDER[name]) {
-		const config = TIERS[tier];
-		const model = ctx.modelRegistry.find(config.provider, config.id);
-		if (model && ctx.modelRegistry.hasConfiguredAuth(model)) return { tier, model };
+function requireTier(ctx: ExtensionContext, tier: TierName): Model<Api> {
+	const { provider, id } = TIERS[tier];
+	const model = ctx.modelRegistry.find(provider, id);
+	if (!model || !ctx.modelRegistry.hasConfiguredAuth(model)) {
+		throw new Error(`Maestro: ${provider}/${id} is missing or has no configured authentication. Check OmniRoute combos and Pi models.json.`);
 	}
-	return undefined;
-}
-
-function requireTier(
-	ctx: ExtensionContext,
-	name: TierName,
-): { tier: TierName; model: Model<Api> } {
-	const resolved = resolveTier(ctx, name);
-	if (!resolved) {
-		const wanted = [name, ...FALLBACK_ORDER[name]].map((tier) => {
-			const { provider, id } = TIERS[tier];
-			return `${provider}/${id}`;
-		});
-		throw new Error(`Maestro: no configured model for tier "${name}". Check credentials for ${wanted.join(", ")}`);
-	}
-	return resolved;
+	return model;
 }
 
 function routeTo(
@@ -213,44 +187,41 @@ export default function (pi: ExtensionAPI) {
 		id: "maestro",
 		name: "Maestro",
 		thinkingLevels: ["low", "medium", "high", "xhigh"],
-		// Smallest window across the configured tiers; shown before the first response.
-		contextWindow: 272_000,
+		input: ["text"],
+		// OmniRoute advertises 1M context and at least 128K output across these combos.
+		contextWindow: 1_000_000,
 		maxTokens: 128_000,
 		async route(request, ctx) {
 			// Compaction summaries and other out-of-loop calls never need a senior model.
 			if (request.reason === "direct") {
-				const { tier, model } = requireTier(ctx, WORKHORSE);
-				return routeTo(request, model, { tier });
+				return routeTo(request, requireTier(ctx, WORKHORSE));
 			}
 
-			const previousTier = tierOf(request.previous?.model);
+			const previousTier = tierOf(request.previous?.model) ?? request.state?.tier;
 
-			// A new task starts a fresh tier decision.
+			// A new task starts a fresh tier decision. Short approvals reuse the last branch tier.
 			if (request.reason === "user") {
 				const text = lastUserText(request.messages).trim();
 				const chosen =
 					previousTier && APPROVAL.test(text) ? previousTier : await classifyTier(request, ctx);
-				const { tier, model } = requireTier(ctx, chosen);
-				return routeTo(request, model, { tier });
+				return routeTo(request, requireTier(ctx, chosen), { tier: chosen });
 			}
 
 			const state = request.state;
 			if (!state) {
 				// The extension was enabled mid-turn: follow the tier already answering, else standard.
 				const chosen = previousTier ?? tierOf(request.failed?.model) ?? "standard";
-				const { tier, model } = requireTier(ctx, chosen);
-				return routeTo(request, model, { tier });
+				return routeTo(request, requireTier(ctx, chosen), { tier: chosen });
 			}
 
 			// A standard turn made its first edit: let the workhorse finish the implementation.
-			if (state.tier === "standard" && editedThisTurn(request.messages)) {
-				const workhorse = resolveTier(ctx, WORKHORSE);
-				if (workhorse) return routeTo(request, workhorse.model, { tier: workhorse.tier });
+			// Retries stay on the failed tier; only a successful continuation can change phases.
+			if (request.reason === "continuation" && state.tier === "standard" && editedThisTurn(request.messages)) {
+				return routeTo(request, requireTier(ctx, WORKHORSE), { tier: WORKHORSE });
 			}
 
-			// Otherwise stay on the turn's tier to keep the prompt cache warm.
-			const { tier, model } = requireTier(ctx, state.tier);
-			return tier === state.tier ? routeTo(request, model) : routeTo(request, model, { tier });
+			// Keep the same combo on continuations and retries; OmniRoute owns execution fallback.
+			return routeTo(request, requireTier(ctx, state.tier));
 		},
 	});
 }
