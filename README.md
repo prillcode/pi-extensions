@@ -5,7 +5,7 @@ This directory is the editable source of truth for local pi extensions.
 ## Workflow
 
 Develop extensions here:
-- `~/dev/pi-skills/pi-extensions/<extension-name>/`
+- `~/dev/pi-extensions/<extension-name>/`
 
 Sync an extension into pi's live auto-discovery directory for testing:
 - `~/.pi/agent/extensions/<extension-name>/`
@@ -13,19 +13,19 @@ Sync an extension into pi's live auto-discovery directory for testing:
 Use the helper script:
 
 ```bash
-~/dev/pi-skills/pi-extensions/sync-to-pi-agent.sh <extension-name>
+~/dev/pi-extensions/sync-to-pi-agent.sh <extension-name>
 ```
 
 Example:
 
 ```bash
-~/dev/pi-skills/pi-extensions/sync-to-pi-agent.sh jira-tools
+~/dev/pi-extensions/sync-to-pi-agent.sh jira-tools
 ```
 
 Sync all extensions:
 
 ```bash
-~/dev/pi-skills/pi-extensions/sync-to-pi-agent.sh --all
+~/dev/pi-extensions/sync-to-pi-agent.sh --all
 ```
 
 Then in pi, reload extensions:

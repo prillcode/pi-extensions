@@ -6,13 +6,13 @@ It wraps the local `openspec` CLI, adds short `osp-*` slash commands, scaffolds 
 
 ## Locations
 
-- Repo source of truth: `~/dev/pi-skills/pi-extensions/openspec-pi/`
+- Repo source of truth: `~/dev/pi-extensions/openspec-pi/`
 - Live Pi extension: `~/.pi/agent/extensions/openspec-pi/`
 
 Sync to the live Pi extensions directory:
 
 ```bash
-~/dev/pi-skills/pi-extensions/sync-to-pi-agent.sh openspec-pi
+~/dev/pi-extensions/sync-to-pi-agent.sh openspec-pi
 ```
 
 Then reload Pi:

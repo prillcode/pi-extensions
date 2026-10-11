@@ -3,12 +3,12 @@
 A pi-native Jira/Confluence extension for lightweight search, issue creation, progress logging, and sprint reports from inside pi.
 
 ## Repo / live locations
-- Repo source of truth: `~/dev/pi-skills/pi-extensions/jira-tools/`
+- Repo source of truth: `~/dev/pi-extensions/jira-tools/`
 - Live pi extension: `~/.pi/agent/extensions/jira-tools/`
 - Sync command:
 
 ```bash
-~/dev/pi-skills/pi-extensions/sync-to-pi-agent.sh jira-tools
+~/dev/pi-extensions/sync-to-pi-agent.sh jira-tools
 ```
 
 Then reload in pi with:

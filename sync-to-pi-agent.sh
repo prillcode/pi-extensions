@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SRC_BASE="$HOME/dev/pi-skills/pi-extensions"
+SRC_BASE="$HOME/dev/pi-extensions"
 DEST_BASE="$HOME/.pi/agent/extensions"
 
 usage() {

@@ -20,12 +20,12 @@ A TUI dashboard extension for pi with integrated workflows.
 
 ## Installation
 
-This extension lives in the pi-skills repo at `~/dev/pi-skills/pi-extensions/dashboard/`.
+This extension lives in the pi-skills repo at `~/dev/pi-extensions/dashboard/`.
 
 Sync it into pi's live extension directory:
 
 ```bash
-~/dev/pi-skills/pi-extensions/sync-to-pi-agent.sh dashboard
+~/dev/pi-extensions/sync-to-pi-agent.sh dashboard
 ```
 
 Then reload pi:
@@ -37,7 +37,7 @@ Then reload pi:
 Alternatively, symlink the repo copy:
 
 ```bash
-ln -s "$HOME/dev/pi-skills/pi-extensions/dashboard" ~/.pi/agent/extensions/dashboard
+ln -s "$HOME/dev/pi-extensions/dashboard" ~/.pi/agent/extensions/dashboard
 ```
 
 ## Commands
