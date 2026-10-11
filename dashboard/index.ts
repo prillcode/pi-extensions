@@ -2,11 +2,11 @@
  * Dashboard Extension - A TUI dashboard for pi
  *
  * Commands: /dashboard, /task (or /todo), /footer
- * Shortcuts: Ctrl+Shift+D (dashboard), Ctrl+Shift+T (task widget)
+ * Shortcuts: Ctrl+Alt+D (dashboard), Ctrl+Shift+T (task widget)
  */
 
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { DynamicBorder } from "@earendil-works/pi-coding-agent";
 import {
 	Container,
@@ -19,6 +19,7 @@ import {
 } from "@earendil-works/pi-tui";
 import type { TodoItem } from "./types.js";
 import { DashboardComponent } from "./components/Dashboard.js";
+import { formatTokens } from "./utils/format.js";
 
 const TODO_SAVE_TYPE = "dashboard-todos";
 
@@ -26,24 +27,29 @@ export default function dashboardExtension(pi: ExtensionAPI) {
 	let todos: TodoItem[] = [];
 	let footerActive = false;
 	let taskWidgetVisible = true;
+	const dashboards = new Set<DashboardComponent>();
 
 	// ============================================================================
 	// Helpers
 	// ============================================================================
 
 	function loadTodos(ctx: ExtensionContext): void {
-		const entries = ctx.sessionManager.getEntries();
+		todos = [];
+		const entries = ctx.sessionManager.getBranch();
 		for (let i = entries.length - 1; i >= 0; i--) {
 			const entry = entries[i];
 			if (entry.type === "custom" && entry.customType === TODO_SAVE_TYPE) {
-				todos = (entry.data as TodoItem[]) ?? [];
+				const data = entry.data;
+				if (Array.isArray(data)) todos = data.filter((t): t is TodoItem =>
+					t && typeof t.id === "string" && typeof t.text === "string" && typeof t.done === "boolean"
+				).map(t => ({ ...t }));
 				break;
 			}
 		}
 	}
 
 	function saveTodos(): void {
-		pi.appendEntry(TODO_SAVE_TYPE, todos);
+		pi.appendEntry(TODO_SAVE_TYPE, todos.map(t => ({ ...t })));
 	}
 
 	function updateTaskWidget(ctx: ExtensionContext): void {
@@ -67,7 +73,7 @@ export default function dashboardExtension(pi: ExtensionAPI) {
 					lines.push(theme.fg("dim", `...and ${todos.length - 3} more`));
 				}
 				return {
-					render: () => lines,
+					render: width => lines.map(line => truncateToWidth(line, width)),
 					invalidate: () => {},
 				};
 			},
@@ -75,23 +81,55 @@ export default function dashboardExtension(pi: ExtensionAPI) {
 		);
 	}
 
+	// Open the dashboard overlay. Shared by /dashboard and the Ctrl+Alt+D shortcut.
+	async function openDashboard(ctx: ExtensionContext): Promise<void> {
+		if (ctx.mode !== "tui") {
+			ctx.ui.notify("Dashboard requires interactive TUI mode", "error");
+			return;
+		}
+
+		let component: DashboardComponent | undefined;
+		let switchFile: string | undefined;
+		const commandCtx = ctx as Partial<ExtensionCommandContext>;
+		try {
+			await ctx.ui.custom((tui, _theme, _kb, done) => {
+				component = new DashboardComponent(tui, ctx, pi, () => done(undefined), todos,
+					() => { saveTodos(); updateTaskWidget(ctx); },
+					file => {
+						if (typeof commandCtx.switchSession !== "function") {
+							ctx.ui.notify("Use /dashboard or /resume for session switching; shortcuts have no command context", "info");
+							return;
+						}
+						switchFile = file; done(undefined);
+					});
+				dashboards.add(component);
+				return component;
+			});
+		} finally {
+			component?.dispose();
+			if (component) dashboards.delete(component);
+		}
+		// No captured UI/context use after session replacement.
+		if (switchFile) await commandCtx.switchSession!(switchFile);
+	}
+
 	// Shared task handler for both /task and /todo
 	async function taskHandler(args: string, ctx: ExtensionContext): Promise<void> {
-		if (!ctx.hasUI) {
-			ctx.ui.notify("Task command requires interactive mode", "error");
+		if (ctx.mode !== "tui") {
+			ctx.ui.notify("Task command requires interactive TUI mode", "error");
 			return;
 		}
 
 		// Quick add
 		if (args?.trim()) {
 			todos.push({
-				id: Date.now().toString(),
+				id: crypto.randomUUID(),
 				text: args.trim(),
 				done: false,
 			});
 			saveTodos();
 			updateTaskWidget(ctx);
-			ctx.ui.notify(`Task added: ${args.trim()}`, "success");
+			ctx.ui.notify(`Task added: ${args.trim()}`, "info");
 			return;
 		}
 
@@ -144,13 +182,13 @@ export default function dashboardExtension(pi: ExtensionAPI) {
 			const text = await ctx.ui.input("New task:", "");
 			if (text?.trim()) {
 				todos.push({
-					id: Date.now().toString(),
+					id: crypto.randomUUID(),
 					text: text.trim(),
 					done: false,
 				});
 				saveTodos();
 				updateTaskWidget(ctx);
-				ctx.ui.notify("Task added", "success");
+				ctx.ui.notify("Task added", "info");
 			}
 		} else if (result !== "none") {
 			const index = parseInt(result, 10);
@@ -170,14 +208,7 @@ export default function dashboardExtension(pi: ExtensionAPI) {
 	pi.registerCommand("dashboard", {
 		description: "Show session dashboard",
 		handler: async (_args, ctx) => {
-			if (!ctx.hasUI) {
-				ctx.ui.notify("Dashboard requires interactive mode", "error");
-				return;
-			}
-
-			await ctx.ui.custom((tui, _theme, _kb, done) => {
-				return new DashboardComponent(tui, ctx, pi, () => done(undefined), todos, saveTodos);
-			});
+			await openDashboard(ctx);
 		},
 	});
 
@@ -220,7 +251,7 @@ export default function dashboardExtension(pi: ExtensionAPI) {
 						}
 
 						const branch = footerData.getGitBranch();
-						const fmt = (n: number) => (n < 1000 ? `${n}` : `${(n / 1000).toFixed(1)}k`);
+						const fmt = formatTokens;
 
 						const left = theme.fg("dim", `↑${fmt(input)} ↓${fmt(output)} $${cost.toFixed(3)}`);
 						const taskStatus = todos.length > 0 ? ` | ${todos.filter((t) => t.done).length}/${todos.length} ✓` : "";
@@ -240,10 +271,10 @@ export default function dashboardExtension(pi: ExtensionAPI) {
 	// Shortcuts
 	// ============================================================================
 
-	pi.registerShortcut(Key.ctrlShift("d"), {
+	pi.registerShortcut(Key.ctrlAlt("d"), {
 		description: "Open dashboard",
 		handler: async (ctx) => {
-			ctx.ui.notify("Use /dashboard to open the dashboard", "info");
+			await openDashboard(ctx);
 		},
 	});
 
@@ -263,7 +294,16 @@ export default function dashboardExtension(pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		loadTodos(ctx);
 		updateTaskWidget(ctx);
-		ctx.ui.notify("Dashboard loaded • /dashboard /task /footer • Ctrl+Shift+D", "info");
+		ctx.ui.notify("Dashboard loaded • /dashboard /task /footer • Ctrl+Alt+D", "info");
+	});
+
+	pi.on("session_tree", async (_event, ctx) => {
+		loadTodos(ctx); updateTaskWidget(ctx);
+	});
+
+	pi.on("session_shutdown", () => {
+		for (const component of dashboards) component.dispose();
+		dashboards.clear();
 	});
 
 	pi.on("turn_end", async (_event, ctx) => {

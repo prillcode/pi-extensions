@@ -1,13 +1,15 @@
-/**
- * Sessions utility module - Pi session management
- */
-
+/** Pi 1.x session metadata and non-blocking, bounded session usage scans. */
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { readFileSync } from "node:fs";
+import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
+import { createInterface } from "node:readline";
+import { basename } from "node:path";
+import { loadBookmarks } from "./bookmarks.js";
 
 export interface SessionInfo {
 	file: string;
 	name: string;
+	preview: string;
 	created: Date;
 	messageCount: number;
 	tokenCount: number;
@@ -15,99 +17,70 @@ export interface SessionInfo {
 	isBookmarked: boolean;
 	isCurrent: boolean;
 }
-
-export async function listSessions(cwd: string): Promise<SessionInfo[]> {
-	const sessions = await SessionManager.list(cwd);
-	const currentFile = SessionManager.getCurrentSessionFile?.() || "";
-
-	return Promise.all(
-		sessions.map(async (session) => {
-			const stats = await getSessionStats(session.file);
-			return {
-				file: session.file,
-				name: formatSessionName(session.file),
-				created: new Date(session.mtime),
-				messageCount: stats.messageCount,
-				tokenCount: stats.inputTokens + stats.outputTokens,
-				cost: stats.cost,
-				isBookmarked: false, // TODO: implement bookmark storage
-				isCurrent: session.file === currentFile,
+type Stats = { messageCount: number; inputTokens: number; outputTokens: number; cost: number };
+const cache = new Map<string, { version: string; stats: Stats }>();
+export async function listSessions(cwd: string, currentFile?: string, sessionDir?: string, signal?: AbortSignal): Promise<SessionInfo[]> {
+	const [sessions, bookmarks] = await Promise.all([
+		SessionManager.list(cwd, sessionDir, undefined, signal), loadBookmarks(),
+	]);
+	const results: SessionInfo[] = new Array(sessions.length);
+	let next = 0;
+	// At most four session streams at a time, not one readFileSync per session.
+	await Promise.all(Array.from({ length: Math.min(4, sessions.length) }, async () => {
+		while (next < sessions.length) {
+			signal?.throwIfAborted();
+			const index = next++, session = sessions[index]!;
+			const stats = await getSessionStats(session.path, signal);
+			results[index] = {
+				file: session.path, name: session.name || formatSessionName(session.path),
+				preview: session.firstMessage, created: session.modified,
+				messageCount: session.messageCount, tokenCount: stats.inputTokens + stats.outputTokens,
+				cost: stats.cost, isBookmarked: bookmarks.has(session.path), isCurrent: session.path === currentFile,
 			};
-		})
-	);
+		}
+	}));
+	return results;
 }
-
-export async function getSessionStats(file: string): Promise<{
-	messageCount: number;
-	inputTokens: number;
-	outputTokens: number;
-	cost: number;
-}> {
-	let messageCount = 0;
-	let inputTokens = 0;
-	let outputTokens = 0;
-	let cost = 0;
-
+export async function getSessionStats(file: string, signal?: AbortSignal): Promise<Stats> {
+	const stats: Stats = { messageCount: 0, inputTokens: 0, outputTokens: 0, cost: 0 };
+	let version: string;
 	try {
-		const content = readFileSync(file, "utf-8");
-		const lines = content.split("\n").filter((l) => l.trim());
-
-		for (const line of lines) {
+		const metadata = await stat(file);
+		version = metadata.mtimeMs + ":" + metadata.size;
+	} catch { return stats; }
+	const cached = cache.get(file);
+	if (cached?.version === version) return cached.stats;
+	const stream = createReadStream(file, { encoding: "utf8", signal });
+	const lines = createInterface({ input: stream, crlfDelay: Infinity });
+	try {
+		let count = 0;
+		for await (const line of lines) {
+			signal?.throwIfAborted();
 			try {
 				const entry = JSON.parse(line);
 				if (entry.type === "message" && entry.message?.role === "assistant") {
-					messageCount++;
-					inputTokens += entry.message.usage?.input || 0;
-					outputTokens += entry.message.usage?.output || 0;
-					cost += entry.message.usage?.cost?.total || 0;
+					stats.messageCount++;
+					stats.inputTokens += entry.message.usage?.input || 0;
+					stats.outputTokens += entry.message.usage?.output || 0;
+					stats.cost += entry.message.usage?.cost?.total || 0;
 				}
-			} catch {
-				// Skip malformed entries
-			}
+			} catch { /* Ignore incomplete trailing records and malformed entries. */ }
+			if (++count % 100 === 0) await new Promise<void>(resolve => setImmediate(resolve));
 		}
-	} catch {
-		// File not readable
-	}
-
-	return { messageCount, inputTokens, outputTokens, cost };
+	} finally { lines.close(); stream.destroy(); }
+	if (cache.size >= 256) cache.delete(cache.keys().next().value!);
+	cache.set(file, { version, stats });
+	return stats;
 }
-
 export function formatSessionName(file: string): string {
-	// Extract session name from path
-	// Format: .../sessions/<workspace>/<timestamp>_<uuid>.jsonl
-	const parts = file.split("/");
-	const filename = parts[parts.length - 1] || "";
-
-	if (!filename) return "Unknown";
-
-	// Remove extension and extract timestamp
-	const withoutExt = filename.replace(/\.jsonl$/, "");
-	const timestamp = withoutExt.split("_")[0];
-
-	if (!timestamp) return withoutExt.slice(0, 30);
-
-	// Parse timestamp (format: 2026-04-18T03-50-29-543Z)
-	try {
-		const formatted = timestamp
-			.replace(/T/, " ")
-			.replace(/-/g, ":")
-			.replace(/:\d{3}Z$/, "");
-		return formatted;
-	} catch {
-		return withoutExt.slice(0, 30);
-	}
+	const timestamp = basename(file, ".jsonl").split("_")[0] || "Unknown";
+	return timestamp.replace(/T(\d{2})-(\d{2})-(\d{2})-\d{3}Z$/, " $1:$2:$3 UTC");
 }
-
 export function getRelativeTime(date: Date): string {
-	const now = new Date();
-	const diff = now.getTime() - date.getTime();
-	const minutes = Math.floor(diff / 60000);
-	const hours = Math.floor(diff / 3600000);
-	const days = Math.floor(diff / 86400000);
-
+	const minutes = Math.max(0, Math.floor((Date.now() - date.getTime()) / 60_000));
 	if (minutes < 1) return "just now";
-	if (minutes < 60) return `${minutes}m ago`;
-	if (hours < 24) return `${hours}h ago`;
-	if (days < 30) return `${days}d ago`;
+	if (minutes < 60) return minutes + "m ago";
+	if (minutes < 1440) return Math.floor(minutes / 60) + "h ago";
+	if (minutes < 43200) return Math.floor(minutes / 1440) + "d ago";
 	return date.toLocaleDateString();
 }

@@ -1,9 +1,12 @@
-/**
- * Git utility module - Wrapper around git commands
- */
+/** Non-blocking git operations. Arguments are never interpolated into a shell. */
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
-import { execSync } from "node:child_process";
-
+const exec = promisify(execFile);
+async function git(cwd: string, args: string[]): Promise<string> {
+	const { stdout } = await exec("git", args, { cwd, encoding: "utf8", timeout: 10_000, maxBuffer: 8 * 1024 * 1024 });
+	return stdout;
+}
 export interface GitStatus {
 	isRepo: boolean;
 	branch: string;
@@ -13,177 +16,56 @@ export interface GitStatus {
 	staged: string[];
 	untracked: string[];
 }
-
-export interface GitCommit {
-	hash: string;
-	message: string;
-	author: string;
-	date: string;
+export interface GitCommit { hash: string; message: string; author: string; date: string; }
+export async function isGitRepo(cwd: string): Promise<boolean> {
+	try { await git(cwd, ["rev-parse", "--git-dir"]); return true; } catch { return false; }
 }
-
-export function isGitRepo(cwd: string): boolean {
-	try {
-		execSync("git rev-parse --git-dir", { cwd, stdio: "pipe" });
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-export function getGitStatus(cwd: string): GitStatus {
-	if (!isGitRepo(cwd)) {
-		return {
-			isRepo: false,
-			branch: "",
-			ahead: 0,
-			behind: 0,
-			modified: [],
-			staged: [],
-			untracked: [],
-		};
-	}
-
-	try {
-		// Get branch and ahead/behind
-		let branch = "";
-		let ahead = 0;
-		let behind = 0;
-		try {
-			const status = execSync("git status --porcelain=2 --branch", { cwd, stdio: "pipe", encoding: "utf-8" });
-			for (const line of status.split("\n")) {
-				if (line.startsWith("# branch.head ")) {
-					branch = line.slice(13);
-				} else if (line.startsWith("# branch.ab ")) {
-					const parts = line.slice(12).split(" ");
-					ahead = parseInt(parts[0] ?? "0", 10);
-					behind = parseInt(parts[1] ?? "0", 10);
-				}
-			}
-		} catch {
-			// Fallback to simple branch name
-			branch = execSync("git branch --show-current", { cwd, stdio: "pipe", encoding: "utf-8" }).trim();
+export async function getGitStatus(cwd: string): Promise<GitStatus> {
+	const result: GitStatus = { isRepo: true, branch: "", ahead: 0, behind: 0, modified: [], staged: [], untracked: [] };
+	const [header, files] = await Promise.all([
+		git(cwd, ["status", "--porcelain=2", "--branch", "--untracked-files=no"]),
+		git(cwd, ["status", "--porcelain", "-z"]),
+	]);
+	for (const line of header.split("\n")) {
+		if (line.startsWith("# branch.head ")) result.branch = line.slice(14);
+		if (line.startsWith("# branch.ab ")) {
+			const [ahead, behind] = line.slice(12).split(" ");
+			result.ahead = Math.abs(Number(ahead)); result.behind = Math.abs(Number(behind));
 		}
-
-		// Get file status
-		const porcelain = execSync("git status --porcelain", { cwd, stdio: "pipe", encoding: "utf-8" });
-		const modified: string[] = [];
-		const staged: string[] = [];
-		const untracked: string[] = [];
-
-		for (const line of porcelain.split("\n").filter((l) => l.trim())) {
-			const status = line.slice(0, 2);
-			const file = line.slice(3);
-
-			if (status[0] !== " " && status[0] !== "?") {
-				staged.push(file);
-			}
-			if (status[1] === "M" || status[1] === "D") {
-				modified.push(file);
-			}
-			if (status === "??") {
-				untracked.push(file);
-			}
-		}
-
-		return {
-			isRepo: true,
-			branch,
-			ahead: Math.abs(ahead),
-			behind: Math.abs(behind),
-			modified,
-			staged,
-			untracked,
-		};
-	} catch {
-		return {
-			isRepo: true,
-			branch: "unknown",
-			ahead: 0,
-			behind: 0,
-			modified: [],
-			staged: [],
-			untracked: [],
-		};
 	}
+	const records = files.split("\0");
+	for (let i = 0; i < records.length; i++) {
+		const line = records[i]!;
+		if (!line) continue;
+		const status = line.slice(0, 2), file = line.slice(3);
+		if (status === "??") result.untracked.push(file);
+		else {
+			if (status[0] !== " ") result.staged.push(file);
+			if (status[1] !== " ") result.modified.push(file);
+			if (/[RC]/.test(status)) i++; // -z rename/copy records include the old path next.
+		}
+	}
+	return result;
 }
-
-export function getRecentCommits(cwd: string, count: number): GitCommit[] {
-	if (!isGitRepo(cwd)) return [];
-
+export async function getRecentCommits(cwd: string, count: number): Promise<GitCommit[]> {
 	try {
-		const format = "%H|%s|%an|%ar";
-		const output = execSync(`git log --oneline -n ${count} --format="${format}"`, {
-			cwd,
-			stdio: "pipe",
-			encoding: "utf-8",
+		const output = await git(cwd, ["log", `-n${Math.max(1, Math.floor(count))}`, "--format=%h%x00%s%x00%an%x00%ar"]);
+		return output.trimEnd().split("\n").filter(Boolean).map(line => {
+			const [hash = "", message = "", author = "", date = ""] = line.split("\0");
+			return { hash, message, author, date };
 		});
-
-		return output
-			.split("\n")
-			.filter((l) => l.trim())
-			.map((line) => {
-				const parts = line.split("|");
-				return {
-					hash: parts[0]?.slice(0, 7) ?? "",
-					message: parts[1] ?? "",
-					author: parts[2] ?? "",
-					date: parts[3] ?? "",
-				};
-			});
-	} catch {
-		return [];
-	}
+	} catch { return []; } // Repositories without commits are valid.
 }
-
-export function getBranches(cwd: string): { name: string; current: boolean }[] {
-	if (!isGitRepo(cwd)) return [];
-
-	try {
-		const output = execSync("git branch -a", { cwd, stdio: "pipe", encoding: "utf-8" });
-		const branches: { name: string; current: boolean }[] = [];
-
-		for (const line of output.split("\n").filter((l) => l.trim())) {
-			const current = line.startsWith("*");
-			let name = line.slice(2).trim();
-
-			// Skip detached HEAD
-			if (name.startsWith("(HEAD detached")) continue;
-
-			// Remove remotes/ prefix for cleaner display
-			if (name.startsWith("remotes/")) {
-				name = name.slice(8);
-			}
-
-			branches.push({ name, current });
-		}
-
-		return branches;
-	} catch {
-		return [];
-	}
+export async function getBranches(cwd: string): Promise<{ name: string; current: boolean }[]> {
+	const output = await git(cwd, ["for-each-ref", "--format=%(HEAD)%00%(refname:short)", "refs/heads"]);
+	return output.trimEnd().split("\n").filter(Boolean).map(line => {
+		const [head, name = ""] = line.split("\0"); return { name, current: head === "*" };
+	});
 }
-
-export function checkoutBranch(cwd: string, branch: string): void {
-	execSync(`git checkout "${branch}"`, { cwd, stdio: "pipe" });
+export async function checkoutBranch(cwd: string, branch: string): Promise<void> { await git(cwd, ["switch", "--", branch]); }
+export async function createBranch(cwd: string, branch: string, checkout = true): Promise<void> {
+	await git(cwd, checkout ? ["switch", "-c", branch] : ["branch", "--", branch]);
 }
-
-export function createBranch(cwd: string, branch: string, checkout = true): void {
-	if (checkout) {
-		execSync(`git checkout -b "${branch}"`, { cwd, stdio: "pipe" });
-	} else {
-		execSync(`git branch "${branch}"`, { cwd, stdio: "pipe" });
-	}
-}
-
-export function deleteBranch(cwd: string, branch: string, force = false): void {
-	const flag = force ? "-D" : "-d";
-	execSync(`git branch ${flag} "${branch}"`, { cwd, stdio: "pipe" });
-}
-
-export function stageFile(cwd: string, file: string): void {
-	execSync(`git add "${file}"`, { cwd, stdio: "pipe" });
-}
-
-export function unstageFile(cwd: string, file: string): void {
-	execSync(`git reset HEAD "${file}"`, { cwd, stdio: "pipe" });
-}
+export async function deleteBranch(cwd: string, branch: string, force = false): Promise<void> { await git(cwd, ["branch", force ? "-D" : "-d", "--", branch]); }
+export async function stageFile(cwd: string, file: string): Promise<void> { await git(cwd, ["add", "--", file]); }
+export async function unstageFile(cwd: string, file: string): Promise<void> { await git(cwd, ["reset", "--", file]); }

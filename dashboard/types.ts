@@ -8,4 +8,4 @@ export interface TodoItem {
 	done: boolean;
 }
 
-export type DashboardTab = "tasks" | "sessions" | "git" | "brain" | "info";
+export type DashboardTab = "tasks" | "sessions" | "git" | "omniroute" | "info";

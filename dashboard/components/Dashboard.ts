@@ -1,53 +1,58 @@
 /**
  * Dashboard Component - Main dashboard UI
  *
- * Tabs: 1:Tasks  2:Sessions  3:Git  4:Brain  5:Info
+ * Tabs: 1:Tasks  2:Sessions  3:Git  4:OmniRoute  5:Info
  */
 
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import type { ExtensionContext, ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey, visibleWidth, truncateToWidth, Container, Text, SelectList, type SelectItem } from "@earendil-works/pi-tui";
-import { DynamicBorder } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
+import { Key, matchesKey, visibleWidth, truncateToWidth } from "@earendil-works/pi-tui";
+import { selectItem, inputText, confirmItem } from "../utils/select.js";
+import { formatTokens } from "../utils/format.js";
 import type { TodoItem, DashboardTab } from "../types.js";
 import { GitPanel } from "./GitPanel.js";
 import { SessionPanel } from "./SessionPanel.js";
-import { BrainPanel } from "./BrainPanel.js";
+import { OmniRoutePanel } from "./OmniRoutePanel.js";
 
 const TABS: { key: DashboardTab; label: string; shortcut: string }[] = [
 	{ key: "tasks", label: "Tasks", shortcut: "1" },
 	{ key: "sessions", label: "Sessions", shortcut: "2" },
 	{ key: "git", label: "Git", shortcut: "3" },
-	{ key: "brain", label: "Brain", shortcut: "4" },
+	{ key: "omniroute", label: "OmniRoute", shortcut: "4" },
 	{ key: "info", label: "Info", shortcut: "5" },
 ];
 
 export class DashboardComponent {
 	#ctx: ExtensionContext;
-	#pi: ExtensionAPI;
 	#onClose: () => void;
-	#tui: { requestRender: () => void };
+	#tui: { requestRender: () => void; terminal?: { rows: number } };
+	#disposed = false;
+	#busy = false;
+	#scroll = 0;
+	#cachedHeight = 0;
 	#todos: TodoItem[];
 	#selectedTab: DashboardTab = "tasks";
 	#showHelp = false;
+	#taskCursor = 0;
 	#cachedLines: string[] = [];
 	#cachedWidth = 0;
 	#gitPanel: GitPanel;
 	#sessionPanel: SessionPanel;
-	#brainPanel: BrainPanel;
+	#omniroutePanel: OmniRoutePanel;
 	#saveTodos: () => void;
 
 	constructor(
-		tui: { requestRender: () => void },
+		tui: { requestRender: () => void; terminal?: { rows: number } },
 		ctx: ExtensionContext,
-		pi: ExtensionAPI,
+		_pi: ExtensionAPI,
 		onClose: () => void,
 		todos: TodoItem[],
 		saveTodos: () => void,
+		onSwitchSession: (file: string) => void = () => ctx.ui.notify("Use /resume to switch sessions from shortcut context", "info"),
 	) {
 		this.#tui = tui;
 		this.#ctx = ctx;
-		this.#pi = pi;
-		this.#onClose = onClose;
+		this.#onClose = () => { this.dispose(); onClose(); };
 		this.#todos = todos;
 		this.#saveTodos = saveTodos;
 		this.#gitPanel = new GitPanel(ctx, () => {
@@ -57,18 +62,37 @@ export class DashboardComponent {
 		this.#sessionPanel = new SessionPanel(ctx, () => {
 			this.invalidate();
 			this.#tui.requestRender();
-		});
-		this.#brainPanel = new BrainPanel(ctx, pi, () => {
+		}, onSwitchSession);
+		this.#omniroutePanel = new OmniRoutePanel(ctx, () => {
 			this.invalidate();
 			this.#tui.requestRender();
-		}, () => this.#onClose());
+		});
 	}
 
 	get #tabIndex(): number {
 		return TABS.findIndex((t) => t.key === this.#selectedTab);
 	}
 
+	dispose(): void {
+		if (this.#disposed) return;
+		this.#disposed = true;
+		this.#gitPanel.dispose(); this.#sessionPanel.dispose(); this.#omniroutePanel.dispose();
+	}
+
+	#runAction(action: () => Promise<void>): void {
+		if (this.#busy || this.#disposed) return;
+		this.#busy = true;
+		void action().catch(error => {
+			if (!this.#disposed) this.#ctx.ui.notify(error instanceof Error ? error.message : "Dashboard action failed", "error");
+		}).finally(() => { this.#busy = false; });
+	}
+
 	handleInput(data: string): void {
+		if (this.#disposed || this.#busy) return;
+		if (matchesKey(data, Key.pageDown) || matchesKey(data, Key.pageUp)) {
+			this.#scroll = Math.max(0, this.#scroll + (matchesKey(data, Key.pageDown) ? 10 : -10));
+			this.invalidate(); this.#tui.requestRender(); return;
+		}
 		if (data === "?") {
 			this.#showHelp = !this.#showHelp;
 			this.invalidate();
@@ -102,58 +126,79 @@ export class DashboardComponent {
 		if (data === "1") return this.#switchTab("tasks");
 		if (data === "2") return this.#switchTab("sessions");
 		if (data === "3") return this.#switchTab("git");
-		if (data === "4") return this.#switchTab("brain");
+		if (data === "4") return this.#switchTab("omniroute");
 		if (data === "5") return this.#switchTab("info");
 
 		// Tab-specific actions
 		// M = menu on any tab
 		if (data === "m" || data === "M") {
 			if (this.#selectedTab === "tasks") {
-				this.#tasksMenu().catch(() => {});
+				this.#runAction(() => this.#tasksMenu());
 			} else if (this.#selectedTab === "sessions") {
-				this.#sessionPanel.handleAction("menu").catch(() => {});
+				this.#runAction(() => this.#sessionPanel.handleAction("menu"));
 			} else if (this.#selectedTab === "git") {
-				this.#gitPanel.handleAction("menu").catch(() => {});
-			} else if (this.#selectedTab === "brain") {
-				this.#brainPanel.showMenu().catch(() => {});
+				this.#runAction(() => this.#gitPanel.handleAction("menu"));
 			}
 			return;
 		}
 
 		if (this.#selectedTab === "tasks") {
+			if (matchesKey(data, Key.up)) {
+				this.#moveTaskCursor(-1);
+				return;
+			}
+			if (matchesKey(data, Key.down)) {
+				this.#moveTaskCursor(1);
+				return;
+			}
+			if (matchesKey(data, Key.space) || matchesKey(data, Key.enter)) {
+				this.#toggleTaskAtCursor();
+				return;
+			}
 			if (data === "a" || data === "A") {
-				this.#addTask().catch(() => {});
+				this.#runAction(() => this.#addTask());
+				return;
+			}
+			if (data === "e" || data === "E") {
+				this.#runAction(() => this.#editTaskAtCursor());
+				return;
+			}
+			if (data === "x" || data === "X") {
+				this.#runAction(() => this.#deleteTaskAtCursor());
+				return;
+			}
+			if (data === "j" || data === "J") {
+				this.#moveTaskAtCursor(1);
+				return;
+			}
+			if (data === "k" || data === "K") {
+				this.#moveTaskAtCursor(-1);
+				return;
 			}
 		} else if (this.#selectedTab === "git") {
-			if (data === "c" || data === "C") this.#gitPanel.handleAction("checkout").catch(() => {});
-			else if (data === "n" || data === "N") this.#gitPanel.handleAction("create").catch(() => {});
-			else if (data === "d" || data === "D") this.#gitPanel.handleAction("delete").catch(() => {});
-			else if (data === "s" || data === "S") this.#gitPanel.handleAction("stage").catch(() => {});
-			else if (data === "u" || data === "U") this.#gitPanel.handleAction("unstage").catch(() => {});
+			if (data === "c" || data === "C") this.#runAction(() => this.#gitPanel.handleAction("checkout"));
+			else if (data === "n" || data === "N") this.#runAction(() => this.#gitPanel.handleAction("create"));
+			else if (data === "d" || data === "D") this.#runAction(() => this.#gitPanel.handleAction("delete"));
+			else if (data === "s" || data === "S") this.#runAction(() => this.#gitPanel.handleAction("stage"));
+			else if (data === "u" || data === "U") this.#runAction(() => this.#gitPanel.handleAction("unstage"));
+			else if (data === "r" || data === "R") void this.#gitPanel.refresh();
 		} else if (this.#selectedTab === "sessions") {
-			if (data === "s" || data === "S") this.#sessionPanel.handleAction("switch").catch(() => {});
-			else if (data === "b" || data === "B") {
-				// Bookmark not implemented yet
-				this.#ctx.ui.notify("Bookmark toggle not yet implemented", "warning");
-			}
-		} else if (this.#selectedTab === "brain") {
-			if (this.#brainPanel.isViewing()) {
-				if (data === "b" || data === "B" || matchesKey(data, Key.escape)) {
-					this.#brainPanel.handleAction("back");
-				}
-			} else {
-				const num = parseInt(data, 10);
-				if (!isNaN(num) && num >= 0) {
-					this.#brainPanel.viewFile(num).catch(() => {});
-				}
-			}
+			if (data === "s" || data === "S") this.#runAction(() => this.#sessionPanel.handleAction("switch"));
+			else if (data === "b" || data === "B") this.#runAction(() => this.#sessionPanel.handleAction("bookmark"));
+			else if (data === "f" || data === "F") this.#runAction(() => this.#sessionPanel.handleAction("filter"));
+			else if (data === "r" || data === "R") void this.#sessionPanel.refresh();
+		} else if (this.#selectedTab === "omniroute") {
+			if (data === "r" || data === "R") void this.#omniroutePanel.refresh();
+			else if (data === "d" || data === "D") this.#omniroutePanel.toggleDetails();
 		}
 	}
 
 	#switchTab(tab: DashboardTab): void {
 		this.#selectedTab = tab;
-		if (tab === "git") this.#gitPanel.refresh();
+		this.#scroll = 0;
+		if (tab === "git") void this.#gitPanel.refresh();
 		if (tab === "sessions") void this.#sessionPanel.refresh();
+		this.#omniroutePanel.setActive(tab === "omniroute");
 		this.invalidate();
 		this.#tui.requestRender();
 	}
@@ -163,68 +208,96 @@ export class DashboardComponent {
 	// ========================================================================
 
 	async #tasksMenu(): Promise<void> {
-		try {
-			const items: SelectItem[] = [
-				{ value: "add", label: "Add task", description: "Create a new task" },
-				{ value: "manage", label: "Manage tasks", description: "Run /task" },
-			];
-
-			const result = await this.#ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
-			const container = new Container();
-			container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
-			container.addChild(new Text(theme.fg("accent", theme.bold("Task Actions")), 1, 0));
-
-			const selectList = new SelectList(items, Math.min(items.length, 10), {
-				selectedPrefix: (t) => theme.fg("accent", t),
-				selectedText: (t) => theme.fg("accent", t),
-				description: (t) => theme.fg("muted", t),
-				scrollInfo: (t) => theme.fg("dim", t),
-				noMatch: (t) => theme.fg("warning", t),
-			});
-
-			selectList.onSelect = (item) => done(item.value);
-			selectList.onCancel = () => done(null);
-			container.addChild(selectList);
-			container.addChild(new Text(theme.fg("dim", "↑↓ navigate • enter select • esc close"), 1, 0));
-			container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
-
-			return {
-				render: (w) => container.render(w),
-				invalidate: () => container.invalidate(),
-				handleInput: (data) => {
-					selectList.handleInput(data);
-					tui.requestRender();
-				},
-			};
-		});
-
-		if (!result) return;
+		const result = await selectItem(this.#ctx, "Task Actions", [
+			{ value: "add", label: "Add task" }, { value: "edit", label: "Edit selected task" },
+			{ value: "toggle", label: "Toggle selected task" }, { value: "delete", label: "Delete selected task" },
+			{ value: "up", label: "Move selected task up" }, { value: "down", label: "Move selected task down" },
+		]);
 		if (result === "add") await this.#addTask();
-		else if (result === "manage") {
-			try {
-				this.#pi.sendUserMessage("/task");
-				this.#onClose();
-			} catch (error) {
-				this.#ctx.ui.notify(`Failed to run /task: ${error}`, "error");
-			}
-		}
-		} catch (error) {
-			this.#ctx.ui.notify(`Menu error: ${error}`, "error");
-		}
+		else if (result === "edit") await this.#editTaskAtCursor();
+		else if (result === "toggle") this.#toggleTaskAtCursor();
+		else if (result === "delete") await this.#deleteTaskAtCursor();
+		else if (result === "up") this.#moveTaskAtCursor(-1);
+		else if (result === "down") this.#moveTaskAtCursor(1);
 	}
 
 	async #addTask(): Promise<void> {
 		try {
-			const text = await this.#ctx.ui.input("New task:", "");
+			const text = await inputText(this.#ctx, "New task:", "");
 			if (!text?.trim()) return;
-			this.#todos.push({ id: Date.now().toString(), text: text.trim(), done: false });
+			if (this.#disposed) return;
+			this.#todos.push({ id: crypto.randomUUID(), text: text.trim(), done: false });
+			this.#taskCursor = this.#todos.length - 1;
 			this.#saveTodos();
 			this.invalidate();
 			this.#tui.requestRender();
-			this.#ctx.ui.notify(`Task added: ${text.trim()}`, "success");
+			this.#ctx.ui.notify(`Task added: ${text.trim()}`, "info");
 		} catch (error) {
 			this.#ctx.ui.notify(`Failed to add task: ${error}`, "error");
 		}
+	}
+
+	#clampTaskCursor(): void {
+		if (this.#todos.length === 0) {
+			this.#taskCursor = 0;
+			return;
+		}
+		this.#taskCursor = Math.max(0, Math.min(this.#todos.length - 1, this.#taskCursor));
+	}
+
+	#moveTaskCursor(delta: number): void {
+		if (this.#todos.length === 0) return;
+		this.#taskCursor = Math.max(0, Math.min(this.#todos.length - 1, this.#taskCursor + delta));
+		this.invalidate();
+		this.#tui.requestRender();
+	}
+
+	#toggleTaskAtCursor(): void {
+		const todo = this.#todos[this.#taskCursor];
+		if (!todo) return;
+		todo.done = !todo.done;
+		this.#saveTodos();
+		this.invalidate();
+		this.#tui.requestRender();
+	}
+
+	async #editTaskAtCursor(): Promise<void> {
+		const todo = this.#todos[this.#taskCursor];
+		if (!todo) return;
+		const text = await inputText(this.#ctx, "Edit task:", todo.text);
+		const trimmed = text?.trim();
+		if (!trimmed || this.#disposed) return;
+		todo.text = trimmed;
+		this.#saveTodos();
+		this.invalidate();
+		this.#tui.requestRender();
+	}
+
+	async #deleteTaskAtCursor(): Promise<void> {
+		const todo = this.#todos[this.#taskCursor];
+		if (!todo) return;
+		const ok = await confirmItem(this.#ctx, "Delete task?", todo.text);
+		if (!ok || this.#disposed) return;
+		const index = this.#todos.indexOf(todo);
+		if (index < 0) return;
+		this.#todos.splice(index, 1);
+		this.#clampTaskCursor();
+		this.#saveTodos();
+		this.invalidate();
+		this.#tui.requestRender();
+	}
+
+	#moveTaskAtCursor(delta: number): void {
+		const index = this.#taskCursor;
+		const target = index + delta;
+		if (index < 0 || index >= this.#todos.length) return;
+		if (target < 0 || target >= this.#todos.length) return;
+		const [todo] = this.#todos.splice(index, 1);
+		this.#todos.splice(target, 0, todo!);
+		this.#taskCursor = target;
+		this.#saveTodos();
+		this.invalidate();
+		this.#tui.requestRender();
 	}
 
 	invalidate(): void {
@@ -232,7 +305,8 @@ export class DashboardComponent {
 	}
 
 	render(width: number): string[] {
-		if (width === this.#cachedWidth && this.#cachedLines.length > 0) {
+		if (width <= 0) return [];
+		if (width === this.#cachedWidth && (this.#tui.terminal?.rows ?? 40) === this.#cachedHeight && this.#cachedLines.length > 0) {
 			return this.#cachedLines;
 		}
 
@@ -257,8 +331,8 @@ export class DashboardComponent {
 				case "git":
 					lines.push(...this.#gitPanel.render(theme, width));
 					break;
-				case "brain":
-					lines.push(...this.#brainPanel.render(theme, width));
+				case "omniroute":
+					lines.push(...this.#omniroutePanel.render(theme, width));
 					break;
 				case "info":
 					lines.push(...this.#renderInfo(width));
@@ -269,17 +343,28 @@ export class DashboardComponent {
 		lines.push(dim("─".repeat(width)));
 		lines.push(this.#renderFooter(theme, width));
 
-		this.#cachedLines = lines;
+		const body = lines.slice(3, -2);
+		const maxBody = Math.max(3, (this.#tui.terminal?.rows ?? 40) - 5);
+		if (this.#selectedTab === "tasks" && !this.#showHelp) {
+			const cursorLine = this.#taskCursor + 2;
+			if (cursorLine < this.#scroll) this.#scroll = cursorLine;
+			if (cursorLine >= this.#scroll + maxBody) this.#scroll = cursorLine - maxBody + 1;
+		}
+		this.#scroll = Math.min(this.#scroll, Math.max(0, body.length - maxBody));
+		const viewport = [...lines.slice(0, 3), ...body.slice(this.#scroll, this.#scroll + maxBody), ...lines.slice(-2)];
+		if (body.length > maxBody) viewport[viewport.length - 1] = ` PgUp/PgDn scroll · ${this.#scroll + 1}-${Math.min(body.length, this.#scroll + maxBody)}/${body.length} · Q close` ;
+		this.#cachedLines = viewport.map(line => truncateToWidth(line, width));
 		this.#cachedWidth = width;
-		return lines;
+		this.#cachedHeight = this.#tui.terminal?.rows ?? 40;
+		return this.#cachedLines;
 	}
 
-	#renderHeader(theme: ReturnType<ExtensionContext["ui"]["theme"]>, width: number): string {
+	#renderHeader(theme: Theme, width: number): string {
 		const title = ` ${theme.bold(theme.fg("accent", "π Dashboard"))} `;
 		return this.#centerLine(title, width);
 	}
 
-	#renderTabBar(theme: ReturnType<ExtensionContext["ui"]["theme"]>, width: number): string {
+	#renderTabBar(theme: Theme, width: number): string {
 		const tabParts = TABS.map((tab) => {
 			const isActive = this.#selectedTab === tab.key;
 			if (isActive) {
@@ -292,7 +377,7 @@ export class DashboardComponent {
 		return this.#centerLine(bar, width);
 	}
 
-	#renderFooter(theme: ReturnType<ExtensionContext["ui"]["theme"]>, width: number): string {
+	#renderFooter(theme: Theme, width: number): string {
 		const dim = (s: string) => theme.fg("dim", s);
 
 		if (this.#showHelp) {
@@ -300,10 +385,10 @@ export class DashboardComponent {
 		}
 
 		const hints: Record<string, string> = {
-			tasks: "A-add task • M-menu • ? help • Q close",
-			sessions: "S-switch • M-menu • ? help • Q close",
-			git: "C-checkout • N-new • D-delete • S-stage • U-unstage • M-menu",
-			brain: "0-9 view file • B-back • M-menu • ? help • Q close",
+			tasks: "↑↓ select • Space toggle • A add • E edit • X del • J/K move • ? help • Q close",
+			sessions: "S switch • B bookmark • F filter • M menu • ? help • Q close",
+			git: "C checkout • N new • D delete • S stage • U unstage • R refresh • M menu",
+			omniroute: "R refresh • D details • PgUp/PgDn scroll • ? help • Q close",
 			info: "←→ tabs • ? help • Q close",
 		};
 
@@ -325,18 +410,22 @@ export class DashboardComponent {
 
 		if (this.#todos.length === 0) {
 			lines.push("");
-			lines.push(dim("  No tasks yet. Use /task to add items."));
+			lines.push(dim("  No tasks yet. Press A or use /task to add items."));
 			return lines;
 		}
 
+		this.#clampTaskCursor();
 		const doneCount = this.#todos.filter((t) => t.done).length;
 		lines.push(`  ${bold(accent("Tasks"))} ${dim("(")}${success(String(doneCount))}${dim("/")}${muted(String(this.#todos.length))}${dim(" completed)")}`);
 		lines.push("");
 
-		for (const todo of this.#todos) {
+		for (let i = 0; i < this.#todos.length; i++) {
+			const todo = this.#todos[i]!;
+			const isCursor = i === this.#taskCursor;
 			const checkbox = todo.done ? success("✓") : dim("○");
 			const text = todo.done ? muted(todo.text) : todo.text;
-			lines.push(`    ${checkbox} ${text}`);
+			const pointer = isCursor ? accent("▸") : " ";
+			lines.push(`    ${pointer} ${checkbox} ${text}`);
 		}
 
 		return lines;
@@ -402,7 +491,7 @@ export class DashboardComponent {
 			}
 		}
 
-		const fmt = (n: number) => (n < 1000 ? `${n}` : `${(n / 1000).toFixed(1)}k`);
+		const fmt = formatTokens;
 
 		lines.push(`  ${bold(accent("Token Usage"))} ${dim("(this session)")}`);
 		lines.push(`    Input:  ${muted(fmt(inputTokens))}`);
@@ -419,10 +508,8 @@ export class DashboardComponent {
 		if (usage) {
 			lines.push(`  ${bold(accent("Context"))}`);
 			lines.push(`    Used: ${muted(fmt(usage.tokens))}`);
-			if (usage.limit) {
-				const pct = ((usage.tokens / usage.limit) * 100).toFixed(1);
-				lines.push(`    Limit: ${muted(fmt(usage.limit))} (${pct}%)`);
-			}
+			const percent = usage.percent === null ? "unknown" : `${usage.percent.toFixed(1)}%`;
+			lines.push(`    Limit: ${muted(fmt(usage.contextWindow))} (${percent})`);
 		}
 
 		return lines;
@@ -432,7 +519,7 @@ export class DashboardComponent {
 	// Help overlay
 	// ========================================================================
 
-	#renderHelp(theme: ReturnType<ExtensionContext["ui"]["theme"]>, _width: number): string[] {
+	#renderHelp(theme: Theme, _width: number): string[] {
 		const lines: string[] = [];
 		const accent = (s: string) => theme.fg("accent", s);
 		const muted = (s: string) => theme.fg("muted", s);
@@ -448,12 +535,17 @@ export class DashboardComponent {
 		lines.push(`    ${muted("Q / Esc")}    Close dashboard`);
 		lines.push("");
 		lines.push(`  ${bold("Tasks Tab")}`);
-		lines.push(`    ${muted("/task [text]")} Add a task`);
-		lines.push(`    ${muted("/todo")}        Manage tasks`);
+		lines.push(`    ${muted("↑ / ↓")}      Move selection`);
+		lines.push(`    ${muted("Space / Enter")} Toggle done`);
+		lines.push(`    ${muted("A")}          Add task`);
+		lines.push(`    ${muted("E")}          Edit task`);
+		lines.push(`    ${muted("X")}          Delete task`);
+		lines.push(`    ${muted("J / K")}      Move task down / up`);
 		lines.push("");
 		lines.push(`  ${bold("Sessions Tab")}`);
 		lines.push(`    ${muted("S")}          Switch to session`);
 		lines.push(`    ${muted("B")}          Toggle bookmark`);
+		lines.push(`    ${muted("F")}          Filter sessions`);
 		lines.push("");
 		lines.push(`  ${bold("Git Tab")}`);
 		lines.push(`    ${muted("C")}          Checkout branch`);
@@ -461,10 +553,12 @@ export class DashboardComponent {
 		lines.push(`    ${muted("D")}          Delete branch`);
 		lines.push(`    ${muted("S")}          Stage file`);
 		lines.push(`    ${muted("U")}          Unstage file`);
+		lines.push(`    ${muted("R")}          Refresh status`);
 		lines.push("");
-		lines.push(`  ${bold("Brain Tab")}`);
-		lines.push(`    ${muted("0-9")}        View file by number`);
-		lines.push(`    ${muted("B")}          Back to file list`);
+		lines.push(`  ${bold("OmniRoute Tab")}`);
+		lines.push(`    ${muted("R")}          Refresh combos and providers`);
+		lines.push(`    ${muted("D")}          Toggle connection details`);
+		lines.push(`    ${muted("PgUp / PgDn")} Scroll long panels or help`);
 		lines.push("");
 		lines.push(`  ${bold("Commands")}`);
 		lines.push(`    ${muted("/dashboard")}  Open this dashboard`);
