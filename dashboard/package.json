@@ -1,6 +1,10 @@
 {
   "name": "dashboard",
-  "description": "Pi Dashboard - Multi-tab dashboard with git integration and session management",
+  "description": "Pi Dashboard - Tasks, sessions, git, OmniRoute metadata, and usage",
+  "scripts": {
+    "test": "bash verify.sh",
+    "typecheck": "bash verify.sh --typecheck"
+  },
   "version": "1.0.0",
   "pi": {
     "extensions": [

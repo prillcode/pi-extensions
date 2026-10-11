@@ -38,8 +38,11 @@ Then in pi, reload extensions:
 
 - Treat this repo directory as the primary editable copy.
 - Treat `~/.pi/agent/extensions/` as the live/testing copy for pi.
+- Live extension directories are real rsync copies, not symlinks. The sync helper rejects a symlink destination to avoid accidentally syncing the source onto itself.
 - The sync script uses `rsync --delete`, so the destination copy mirrors the repo copy.
+- If `/reload` leaves a command/change missing, `/quit` and restart Pi; the reload failure observed during migration has not been diagnosed.
 - Excludes:
   - `node_modules`
   - `dist`
   - `.DS_Store`
+  - `docs`
